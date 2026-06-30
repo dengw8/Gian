@@ -1,0 +1,6 @@
+[submodule "reference/deer-flow"]
+	path = reference/deer-flow
+	url = https://github.com/bytedance/deer-flow.git
+[submodule "reference/pi"]
+	path = reference/pi
+	url = https://github.com/earendil-works/pi.git
