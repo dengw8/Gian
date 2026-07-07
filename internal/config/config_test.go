@@ -1,0 +1,70 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestLoadFileAppliesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  addr: ':9090'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Server.Addr != ":9090" {
+		t.Fatalf("addr = %q, want :9090", cfg.Server.Addr)
+	}
+	if cfg.Model.Provider != "fake" {
+		t.Fatalf("provider = %q, want fake", cfg.Model.Provider)
+	}
+	if cfg.Agent.MaxIterations != defaultMaxIterations {
+		t.Fatalf("max iterations = %d, want %d", cfg.Agent.MaxIterations, defaultMaxIterations)
+	}
+	if cfg.Storage.LocalDir != "data" {
+		t.Fatalf("local dir = %q, want data", cfg.Storage.LocalDir)
+	}
+	if cfg.Tools.Workspace != "." {
+		t.Fatalf("workspace = %q, want .", cfg.Tools.Workspace)
+	}
+}
+
+func TestLoadFileReadsOpenAIAPIKeyFromEnv(t *testing.T) {
+	t.Setenv(APIKeyEnv, "test-key")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("model:\n  provider: openai_compatible\n  openai:\n    base_url: http://example.test/v1\n    model: test-model\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model.OpenAI.APIKey != "test-key" {
+		t.Fatalf("api key = %q, want test-key", cfg.Model.OpenAI.APIKey)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateOpenAICompatibleRequiresAPIKey(t *testing.T) {
+	t.Setenv(APIKeyEnv, "")
+	cfg := Default()
+	cfg.Model.Provider = "openai_compatible"
+	cfg.Model.OpenAI.BaseURL = "http://example.test/v1"
+	cfg.Model.OpenAI.Model = "test-model"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), APIKeyEnv) {
+		t.Fatalf("err = %v, want missing api key error", err)
+	}
+}
