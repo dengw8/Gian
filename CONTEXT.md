@@ -40,6 +40,18 @@ _Avoid_: embedded database, production database
 The ordered sequence of runtime events emitted during a Run so clients can observe model output, tool calls, tool results, and termination.
 _Avoid_: log stream, callback trace
 
+**Plan Mode**:
+A Run-level mode where the Agent first performs read-only exploration and produces a persisted plan, then waits for explicit execution before using normal tool access to carry out the plan.
+_Avoid_: global service mode, transient UI toggle
+
+**Plan State**:
+The persisted planning state for a Run, including the current mode, planned steps, and progress timestamps.
+_Avoid_: frontend-only state, prompt-only state
+
+**Plan Step**:
+One numbered item in a Plan State. A Plan Step moves from pending to completed as execution messages report completion.
+_Avoid_: issue, task tracker ticket
+
 **Model Provider**:
 The component behind the agent runtime that turns messages and available tools into the next assistant response, either through a deterministic fake implementation or a configured real model endpoint.
 _Avoid_: LLM client, model backend

@@ -110,6 +110,24 @@ func ValidateShellCommand(command string) error {
 	return nil
 }
 
+func ValidateReadOnlyShellCommand(command string) error {
+	if err := ValidateShellCommand(command); err != nil {
+		return err
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return fmt.Errorf("shell command is required")
+	}
+	base := fields[0]
+	if idx := strings.LastIndex(base, "/"); idx >= 0 {
+		base = base[idx+1:]
+	}
+	if !isReadOnlyCommand(base, fields[1:]) {
+		return fmt.Errorf("shell command rejected: %q is not allowed in plan mode", base)
+	}
+	return nil
+}
+
 func isDestructiveCommand(command string) bool {
 	base := command
 	if idx := strings.LastIndex(base, "/"); idx >= 0 {
@@ -118,6 +136,29 @@ func isDestructiveCommand(command string) bool {
 	switch base {
 	case "rm", "rmdir", "mv", "chmod", "chown", "sudo", "dd", "mkfs", "shutdown", "reboot", "kill", "pkill":
 		return true
+	default:
+		return false
+	}
+}
+
+func isReadOnlyCommand(command string, args []string) bool {
+	switch command {
+	case "cat", "head", "tail", "less", "more", "grep", "find", "ls", "pwd", "echo", "printf", "wc", "sort", "uniq", "diff", "file", "stat", "du", "df", "tree", "which", "whereis", "type", "env", "printenv", "uname", "whoami", "id", "date", "ps", "rg", "fd", "jq":
+		return true
+	case "sed":
+		return len(args) > 0 && args[0] == "-n"
+	case "git":
+		if len(args) == 0 {
+			return false
+		}
+		switch args[0] {
+		case "status", "log", "diff", "show", "branch", "remote":
+			return true
+		default:
+			return false
+		}
+	case "go":
+		return len(args) > 0 && args[0] == "test"
 	default:
 		return false
 	}

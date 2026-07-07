@@ -11,6 +11,8 @@ type State struct {
 	SystemPrompt string            `json:"system_prompt"`
 	Messages     []runtime.Message `json:"messages"`
 	Metadata     map[string]any    `json:"metadata"`
+	Plan         runtime.PlanState `json:"plan"`
+	ActiveTools  []runtime.ToolDefinition
 }
 
 type Middleware interface {

@@ -5,6 +5,7 @@ const state = {
   currentRunId: "",
   runs: [],
   events: [],
+  plan: { mode: "off", steps: [] },
   attachments: [],
   busy: false,
 };
@@ -24,9 +25,14 @@ const el = {
   messageTimeline: document.querySelector("#messageTimeline"),
   modelProvider: document.querySelector("#modelProvider"),
   newRunButton: document.querySelector("#newRunButton"),
+  executePlanButton: document.querySelector("#executePlanButton"),
+  planModeToggle: document.querySelector("#planModeToggle"),
+  planStatus: document.querySelector("#planStatus"),
+  planView: document.querySelector("#planView"),
   refreshEventsButton: document.querySelector("#refreshEventsButton"),
   refreshMessagesButton: document.querySelector("#refreshMessagesButton"),
   refreshRunButton: document.querySelector("#refreshRunButton"),
+  resetPlanButton: document.querySelector("#resetPlanButton"),
   runIdInput: document.querySelector("#runIdInput"),
   runStatus: document.querySelector("#runStatus"),
   sendButton: document.querySelector("#sendButton"),
@@ -51,6 +57,9 @@ function bindEvents() {
   el.refreshEventsButton.addEventListener("click", refreshEvents);
   el.imageButton.addEventListener("click", () => el.imageInput.click());
   el.imageInput.addEventListener("change", handleImageSelection);
+  el.planModeToggle.addEventListener("change", () => setPlanMode(el.planModeToggle.checked));
+  el.executePlanButton.addEventListener("click", executePlan);
+  el.resetPlanButton.addEventListener("click", resetPlan);
   el.sendButton.addEventListener("click", () => submitTurn(false));
   el.streamButton.addEventListener("click", () => submitTurn(true));
 
@@ -97,9 +106,10 @@ async function createEmptyRun() {
   await withBusy(async () => {
     const data = await requestJSON("/v1/runs", {
       method: "POST",
-      body: JSON.stringify({}),
+      body: JSON.stringify({ plan_mode: el.planModeToggle.checked }),
     });
     selectRun(data.run);
+    selectPlan(data.plan);
     renderMessages(data.messages || []);
     await Promise.all([refreshEvents(), loadRunHistory()]);
     toast("Run created");
@@ -121,7 +131,7 @@ async function loadRun(runId) {
       method: "GET",
     });
     selectRun(run);
-    await Promise.all([refreshMessages(), refreshEvents(), loadRunHistory()]);
+    await Promise.all([refreshMessages(), refreshEvents(), refreshPlan(), loadRunHistory()]);
   });
 }
 
@@ -135,6 +145,9 @@ async function refreshRunMetadata() {
       method: "GET",
     });
     selectRun(run);
+    if (run.plan_mode) {
+      el.planStatus.textContent = planLabelFromRun(run);
+    }
   });
 }
 
@@ -172,6 +185,69 @@ async function refreshEvents() {
   renderEvents();
 }
 
+async function refreshPlan() {
+  if (!state.currentRunId) {
+    selectPlan(null);
+    return;
+  }
+  const plan = await requestJSON(`/v1/runs/${encodeURIComponent(state.currentRunId)}/plan`, {
+    method: "GET",
+  });
+  selectPlan(plan);
+}
+
+async function setPlanMode(enabled) {
+  if (!state.currentRunId) {
+    state.plan = { mode: enabled ? "planning" : "off", steps: [] };
+    renderPlan();
+    return;
+  }
+  await withBusy(async () => {
+    const data = await requestJSON(`/v1/runs/${encodeURIComponent(state.currentRunId)}/plan-mode`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    });
+    selectRun(data.run);
+    selectPlan(data.plan);
+    await Promise.all([refreshEvents(), loadRunHistory()]);
+  });
+}
+
+async function executePlan() {
+  if (!state.currentRunId) {
+    toast("No run selected");
+    return;
+  }
+  await withBusy(async () => {
+    const data = await requestJSON(`/v1/runs/${encodeURIComponent(state.currentRunId)}/plan/execute`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    selectRun(data.run);
+    selectPlan(data.plan);
+    await Promise.all([refreshEvents(), loadRunHistory()]);
+    toast("Plan execution enabled");
+  });
+}
+
+async function resetPlan() {
+  if (!state.currentRunId) {
+    state.plan = { mode: "off", steps: [] };
+    renderPlan();
+    return;
+  }
+  await withBusy(async () => {
+    const data = await requestJSON(`/v1/runs/${encodeURIComponent(state.currentRunId)}/plan/reset`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    selectRun(data.run);
+    selectPlan(data.plan);
+    await Promise.all([refreshEvents(), loadRunHistory()]);
+    toast("Plan reset");
+  });
+}
+
 async function submitTurn(streaming) {
   const message = el.messageInput.value.trim();
   const attachments = state.attachments.map(toRequestAttachment);
@@ -188,9 +264,10 @@ async function submitTurn(streaming) {
       if (!state.currentRunId) {
         const data = await requestJSON("/v1/runs", {
           method: "POST",
-          body: JSON.stringify({ message, attachments }),
+          body: JSON.stringify({ message, attachments, plan_mode: el.planModeToggle.checked }),
         });
         selectRun(data.run);
+        selectPlan(data.plan);
         renderMessages(data.messages || []);
         await Promise.all([refreshEvents(), loadRunHistory()]);
         toast("Run created and turn completed");
@@ -208,6 +285,7 @@ async function submitTurn(streaming) {
           },
         );
         selectRun(data.run);
+        selectPlan(data.plan);
         renderMessages(data.messages || []);
         await Promise.all([refreshEvents(), loadRunHistory()]);
       }
@@ -252,7 +330,7 @@ async function streamTurn(message, attachments) {
     }
   }
 
-  await Promise.all([refreshRunMetadata(), refreshMessages(), refreshEvents(), loadRunHistory()]);
+  await Promise.all([refreshRunMetadata(), refreshMessages(), refreshEvents(), refreshPlan(), loadRunHistory()]);
 }
 
 function consumeSSEBuffer(buffer) {
@@ -285,9 +363,17 @@ function selectRun(run) {
   el.runIdInput.value = run.id;
   el.runStatus.textContent = run.status || "-";
   el.modelProvider.textContent = run.model_provider || "-";
+  el.planStatus.textContent = planLabelFromRun(run);
   el.updatedAt.textContent = formatDate(run.updated_at);
   upsertRun(run);
   renderHistory();
+}
+
+function selectPlan(plan) {
+  state.plan = plan || { mode: "off", steps: [] };
+  el.planModeToggle.checked = state.plan.mode === "planning";
+  el.planStatus.textContent = planLabel(state.plan);
+  renderPlan();
 }
 
 function upsertRun(run) {
@@ -312,11 +398,84 @@ function renderHistory() {
       button.classList.add("active");
     }
     button.type = "button";
-    button.textContent = run.id;
+    button.textContent = run.plan_mode && run.plan_mode !== "off"
+      ? `${run.id} (${run.plan_mode})`
+      : run.id;
     button.title = `${run.status || "unknown"} / ${formatDate(run.updated_at)}`;
     button.addEventListener("click", () => loadRun(run.id));
     el.historyList.append(button);
   });
+}
+
+function renderPlan() {
+  const plan = state.plan || { mode: "off", steps: [] };
+  const steps = plan.steps || [];
+  el.planView.classList.remove("empty-state");
+  el.planView.textContent = "";
+  el.executePlanButton.disabled = state.busy || !state.currentRunId || steps.length === 0 || plan.mode === "executing";
+  el.resetPlanButton.disabled = state.busy || !state.currentRunId || (plan.mode === "off" && steps.length === 0);
+
+  if (plan.mode === "off" && steps.length === 0) {
+    el.planView.classList.add("empty-state");
+    el.planView.textContent = "Enable Plan Mode to create a plan.";
+    return;
+  }
+
+  const summary = document.createElement("div");
+  summary.className = "plan-summary";
+  const label = document.createElement("span");
+  label.className = "plan-mode-pill";
+  label.textContent = planLabel(plan);
+  const count = document.createElement("strong");
+  count.textContent = `${completedPlanSteps(plan)}/${steps.length} completed`;
+  summary.append(label, count);
+  el.planView.append(summary);
+
+  if (steps.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = plan.mode === "planning" ? "Send a message to generate a plan." : "No plan steps yet.";
+    el.planView.append(empty);
+    return;
+  }
+
+  const list = document.createElement("ol");
+  list.className = "plan-steps";
+  steps.forEach((step) => {
+    const item = document.createElement("li");
+    item.className = `plan-step ${step.status === "completed" ? "completed" : ""}`;
+    const index = document.createElement("span");
+    index.className = "plan-step-index";
+    index.textContent = step.status === "completed" ? "✓" : String(step.index);
+    const text = document.createElement("span");
+    text.textContent = step.text;
+    item.append(index, text);
+    list.append(item);
+  });
+  el.planView.append(list);
+}
+
+function planLabelFromRun(run) {
+  if (!run?.plan_mode || run.plan_mode === "off") {
+    return "off";
+  }
+  const total = run.plan_steps || 0;
+  const completed = run.plan_completed || 0;
+  return total > 0 ? `${run.plan_mode} ${completed}/${total}` : run.plan_mode;
+}
+
+function planLabel(plan) {
+  if (!plan?.mode) {
+    return "off";
+  }
+  if (plan.mode === "off" && (plan.steps || []).length > 0) {
+    return "complete";
+  }
+  return plan.mode;
+}
+
+function completedPlanSteps(plan) {
+  return (plan.steps || []).filter((step) => step.status === "completed").length;
 }
 
 function renderMessages(messages) {
@@ -626,11 +785,14 @@ function setBusy(value) {
     el.refreshRunButton,
     el.refreshMessagesButton,
     el.refreshEventsButton,
+    el.executePlanButton,
+    el.resetPlanButton,
     el.sendButton,
     el.streamButton,
   ].forEach((button) => {
     button.disabled = value;
   });
+  renderPlan();
 }
 
 function toast(message) {

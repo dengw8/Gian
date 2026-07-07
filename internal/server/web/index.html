@@ -55,6 +55,10 @@
             <strong id="modelProvider">-</strong>
           </div>
           <div>
+            <span class="muted-label">Plan</span>
+            <strong id="planStatus">off</strong>
+          </div>
+          <div>
             <span class="muted-label">Updated</span>
             <strong id="updatedAt">-</strong>
           </div>
@@ -74,13 +78,28 @@
             </div>
           </div>
 
-          <div class="events-panel">
-            <div class="panel-toolbar">
-              <h2>Events</h2>
-              <button id="refreshEventsButton" type="button">Refresh</button>
+          <div class="side-stack">
+            <div class="plan-panel">
+              <div class="panel-toolbar">
+                <h2>Plan</h2>
+                <div class="button-row">
+                  <button id="executePlanButton" type="button">Execute</button>
+                  <button id="resetPlanButton" type="button">Reset</button>
+                </div>
+              </div>
+              <div id="planView" class="plan-view empty-state">
+                Enable Plan Mode to create a plan.
+              </div>
             </div>
-            <div id="eventStream" class="event-stream empty-state">
-              Persisted and streamed events appear here.
+
+            <div class="events-panel">
+              <div class="panel-toolbar">
+                <h2>Events</h2>
+                <button id="refreshEventsButton" type="button">Refresh</button>
+              </div>
+              <div id="eventStream" class="event-stream empty-state">
+                Persisted and streamed events appear here.
+              </div>
             </div>
           </div>
         </section>
@@ -94,6 +113,10 @@
             </label>
             <button id="imageButton" class="image-button" type="button" title="Attach images">Image</button>
             <input id="imageInput" class="sr-only" type="file" accept="image/*" multiple />
+            <label class="toggle-field">
+              <input id="planModeToggle" type="checkbox" />
+              <span>Plan Mode</span>
+            </label>
             <button id="sendButton" class="primary-button" type="button">Send</button>
             <button id="streamButton" class="primary-button secondary" type="button">Stream</button>
           </div>

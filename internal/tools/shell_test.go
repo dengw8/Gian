@@ -48,3 +48,12 @@ func TestShellToolRejectsChainedCommand(t *testing.T) {
 		t.Fatalf("err = %v, want command chaining rejection", err)
 	}
 }
+
+func TestValidateReadOnlyShellCommand(t *testing.T) {
+	if err := ValidateReadOnlyShellCommand("rg PlanMode"); err != nil {
+		t.Fatalf("read-only command rejected: %v", err)
+	}
+	if err := ValidateReadOnlyShellCommand("touch file.txt"); err == nil || !strings.Contains(err.Error(), "not allowed in plan mode") {
+		t.Fatalf("err = %v, want plan mode rejection", err)
+	}
+}

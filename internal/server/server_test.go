@@ -223,6 +223,61 @@ func TestListRunsReturnsStoredRunsNewestUpdatedFirst(t *testing.T) {
 	}
 }
 
+func TestPlanModeHTTPLifecycle(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	srv := New(Config{
+		Runner: agent.NewRunner(agent.Config{
+			Model:      model.NewFakeProvider(),
+			Middleware: []agent.Middleware{agent.PlanModeMiddleware{}},
+		}),
+		Store:         runStore,
+		ModelProvider: "fake",
+	})
+
+	created := createRunForTest(t, srv, `{"message":"please plan","plan_mode":true}`)
+	if created.Run.PlanMode != string(runtime.PlanModePlanning) {
+		t.Fatalf("run plan mode = %q, want planning", created.Run.PlanMode)
+	}
+	if len(created.Plan.Steps) != 3 {
+		t.Fatalf("created plan = %#v", created.Plan)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+created.Run.ID+"/plan/execute", bytes.NewBufferString(`{}`))
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("execute status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/runs/"+created.Run.ID+"/turns", bytes.NewBufferString(`{"message":"continue"}`))
+	rec = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("turn status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var turn appendTurnResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &turn); err != nil {
+		t.Fatal(err)
+	}
+	if turn.Plan.Steps[0].Status != runtime.PlanStepCompleted {
+		t.Fatalf("turn plan = %#v", turn.Plan)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/runs/"+created.Run.ID+"/plan", nil)
+	rec = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get plan status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var plan runtime.PlanState
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.CompletedCount() != 1 {
+		t.Fatalf("persisted plan = %#v", plan)
+	}
+}
+
 func TestRunReadAPIsReturnPersistedData(t *testing.T) {
 	runStore := local.New(t.TempDir())
 	srv := New(Config{

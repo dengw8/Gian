@@ -175,6 +175,14 @@ curl -sS "$BASE/v1/runs" \
   -d '{"message":"hello"}'
 ```
 
+Create a Run in Plan Mode:
+
+```bash
+curl -sS "$BASE/v1/runs" \
+  -H 'content-type: application/json' \
+  -d '{"message":"please plan this change","plan_mode":true}'
+```
+
 Create a Run with an inline image attachment:
 
 ```bash
@@ -271,6 +279,40 @@ curl -sS "$BASE/v1/runs/$RUN_ID/messages"
 curl -sS "$BASE/v1/runs/$RUN_ID/events"
 ```
 
+### Plan Mode
+
+Enable read-only planning for a Run:
+
+```bash
+curl -sS "$BASE/v1/runs/$RUN_ID/plan-mode" \
+  -H 'content-type: application/json' \
+  -d '{"enabled":true}'
+```
+
+Fetch the persisted Plan State:
+
+```bash
+curl -sS "$BASE/v1/runs/$RUN_ID/plan"
+```
+
+Execute a generated plan:
+
+```bash
+curl -sS "$BASE/v1/runs/$RUN_ID/plan/execute" \
+  -H 'content-type: application/json' \
+  -d '{}'
+```
+
+Reset a plan:
+
+```bash
+curl -sS "$BASE/v1/runs/$RUN_ID/plan/reset" \
+  -H 'content-type: application/json' \
+  -d '{}'
+```
+
+While planning, the runtime restricts tools to read-only exploration. During execution, the runtime injects the persisted steps and tracks `[DONE:n]` completion markers.
+
 ## Tools
 
 ### `read_file`
@@ -312,6 +354,7 @@ Local persistence is stored under `storage.local_dir`:
 ```text
 data/runs/<run_id>/
   metadata.json
+  plan.json
   messages.jsonl
   events.jsonl
 ```
@@ -333,6 +376,7 @@ Implemented:
 - Fake Model
 - OpenAI-Compatible Provider
 - ModelHub Provider
+- Run-level Plan Mode
 - Workspace Tools
 - Shell Tool with conservative safety policy
 - Message timestamps
@@ -344,7 +388,6 @@ Out of scope for this version:
 - Docker packaging
 - Database-backed Run Store
 - MCP integration
-- Full Plan Mode approval workflow
 - Production context compaction
 - Deep subagent recursion
 - Fornax trace backend integration

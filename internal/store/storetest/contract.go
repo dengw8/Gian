@@ -124,6 +124,51 @@ func RunStoreContract(t *testing.T, newStore Factory) {
 		}
 	})
 
+	t.Run("plan state", func(t *testing.T) {
+		runStore := newStore(t)
+		meta, err := runStore.CreateRun(context.Background(), store.CreateRunInput{ModelProvider: "fake"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		empty, err := runStore.GetPlan(context.Background(), meta.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if empty.Mode != runtime.PlanModeOff {
+			t.Fatalf("empty plan mode = %q, want off", empty.Mode)
+		}
+
+		plan := runtime.PlanState{
+			Mode: runtime.PlanModePlanning,
+			Steps: []runtime.PlanStep{
+				{Index: 1, Text: "Inspect current behavior", Status: runtime.PlanStepCompleted},
+				{Index: 2, Text: "Implement the change", Status: runtime.PlanStepPending},
+			},
+		}
+		updated, err := runStore.SavePlan(context.Background(), meta.ID, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated.PlanMode != string(runtime.PlanModePlanning) {
+			t.Fatalf("metadata plan mode = %q", updated.PlanMode)
+		}
+		if updated.PlanSteps != 2 || updated.PlanCompleted != 1 {
+			t.Fatalf("metadata plan summary = steps %d completed %d", updated.PlanSteps, updated.PlanCompleted)
+		}
+
+		got, err := runStore.GetPlan(context.Background(), meta.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Mode != runtime.PlanModePlanning || len(got.Steps) != 2 {
+			t.Fatalf("plan = %#v", got)
+		}
+		if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+			t.Fatalf("plan timestamps not set: %#v", got)
+		}
+	})
+
 	t.Run("list runs newest updated first", func(t *testing.T) {
 		runStore := newStore(t)
 

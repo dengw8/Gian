@@ -31,12 +31,14 @@ type TurnInput struct {
 	Message     string
 	Attachments []runtime.Attachment
 	History     []runtime.Message
+	Plan        runtime.PlanState
 	Events      EventSink
 }
 
 type TurnOutput struct {
 	Messages    []runtime.Message `json:"messages"`
 	NewMessages []runtime.Message `json:"new_messages"`
+	Plan        runtime.PlanState `json:"plan"`
 }
 
 type EventSink func(event runtime.Event) error
@@ -71,6 +73,7 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 			Attachments: append([]runtime.Attachment(nil), input.Attachments...),
 		})),
 		Metadata: map[string]any{},
+		Plan:     normalizePlan(input.Plan),
 	}
 	newMessageStart := len(history)
 
@@ -84,6 +87,7 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 	for i := 0; i < r.maxIterations; i++ {
 		toolDefinitions := r.toolDefinitions()
 		state.SystemPrompt = r.systemPrompt(toolDefinitions)
+		state.ActiveTools = toolDefinitions
 		req := model.Request{
 			SystemPrompt: state.SystemPrompt,
 			Messages:     append([]runtime.Message(nil), state.Messages...),
@@ -108,10 +112,14 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 		}
 
 		state.Messages = append(state.Messages, timestampMessage(resp.Message))
+		if err := r.updatePlanFromAssistant(input.Events, state, resp.Message); err != nil {
+			return TurnOutput{}, err
+		}
 		if len(resp.Message.ToolCalls) == 0 {
 			return TurnOutput{
 				Messages:    append([]runtime.Message(nil), state.Messages...),
 				NewMessages: append([]runtime.Message(nil), state.Messages[newMessageStart:]...),
+				Plan:        state.Plan,
 			}, nil
 		}
 		for _, call := range resp.Message.ToolCalls {
@@ -144,6 +152,41 @@ func timestampMessage(message runtime.Message) runtime.Message {
 		message.CreatedAt = time.Now().UTC()
 	}
 	return message
+}
+
+func normalizePlan(plan runtime.PlanState) runtime.PlanState {
+	if plan.Mode == "" {
+		plan.Mode = runtime.PlanModeOff
+	}
+	return plan
+}
+
+func (r *Runner) updatePlanFromAssistant(sink EventSink, state *State, message runtime.Message) error {
+	if message.Role != runtime.RoleAssistant {
+		return nil
+	}
+	switch state.Plan.Mode {
+	case runtime.PlanModePlanning:
+		steps := extractPlanSteps(message.Content)
+		if len(steps) == 0 {
+			return emit(sink, runtime.NewEvent("plan_not_found", "No numbered Plan section found"))
+		}
+		state.Plan.Steps = steps
+		return emit(sink, runtime.NewEvent("plan_created", fmt.Sprintf("Plan created with %d step(s)", len(steps))))
+	case runtime.PlanModeExecuting:
+		updated, completed := markCompletedSteps(state.Plan, message.Content)
+		state.Plan = updated
+		for _, step := range completed {
+			if err := emit(sink, runtime.NewEvent("plan_step_completed", fmt.Sprintf("Completed plan step %d: %s", step.Index, step.Text))); err != nil {
+				return err
+			}
+		}
+		if len(state.Plan.Steps) > 0 && state.Plan.CompletedCount() == len(state.Plan.Steps) {
+			state.Plan.Mode = runtime.PlanModeOff
+			return emit(sink, runtime.NewEvent("plan_completed", "Plan completed"))
+		}
+	}
+	return nil
 }
 
 func emit(sink EventSink, event runtime.Event) error {

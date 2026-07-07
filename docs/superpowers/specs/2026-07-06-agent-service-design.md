@@ -20,7 +20,7 @@ Build a standalone Go Agent Service in this repository. The service must follow 
 - Do not modify `reference/pi` or `reference/deer-flow`.
 - Do not add Docker packaging in the first version.
 - Do not implement database persistence in the first version.
-- Do not fully implement MCP, full Plan Mode approval flow, production context compaction, deep subagent recursion, Fornax trace integration, or shell AST security analysis. These must have clear runtime extension points where relevant.
+- Do not fully implement MCP, production context compaction, deep subagent recursion, Fornax trace integration, or shell AST security analysis. These must have clear runtime extension points where relevant.
 
 ## Architecture
 
@@ -73,6 +73,14 @@ The agent runtime must not depend on the local store implementation or the OpenA
   - Appends one user message, optionally with inline image attachments, and executes a non-streaming Turn.
 - `POST /v1/runs/{run_id}/turns/stream`
   - Appends one user message, optionally with inline image attachments, and streams this Turn's events as SSE.
+- `GET /v1/runs/{run_id}/plan`
+  - Returns persisted Plan State.
+- `POST /v1/runs/{run_id}/plan-mode`
+  - Enables or disables read-only planning for a Run.
+- `POST /v1/runs/{run_id}/plan/execute`
+  - Starts executing the persisted plan.
+- `POST /v1/runs/{run_id}/plan/reset`
+  - Clears the persisted plan.
 
 The business assumption is that the same Run will not receive concurrent Turn submissions. The implementation should still keep a lightweight `running` status check and return `409 Conflict` for obvious concurrent misuse.
 
@@ -83,6 +91,7 @@ Define a `RunStore` interface for persistence. The first implementation stores e
 ```text
 data/runs/<run_id>/
   metadata.json
+  plan.json
   messages.jsonl
   events.jsonl
 ```
@@ -162,7 +171,8 @@ First-version middleware:
 - Event persistence middleware: emits and persists structured events.
 - Safety middleware: checks Tool safety attributes and shell command policy.
 - System prompt middleware: builds static and dynamic sections.
-- No-op extension middlewares for future Plan Mode, compaction, and subagent support where they clarify the boundary.
+- Plan Mode middleware: injects planning/execution context and restricts tools during read-only planning.
+- No-op extension middlewares for future compaction and subagent support where they clarify the boundary.
 
 ## State
 
@@ -231,6 +241,7 @@ The service embeds a static Web Console under `/app/`. It supports:
 - Sending non-streaming and SSE Turns.
 - Optimistically displaying user messages while requests are in flight.
 - Attaching, previewing, sending, and rendering inline images.
+- Enabling Plan Mode, viewing persisted Plan Steps, executing a plan, and resetting Plan State.
 
 The Web Console is served by the Go service and has no separate Node build step.
 
@@ -272,6 +283,7 @@ Focused tests:
 - HTTP handlers create Runs, append Turns, and stream SSE events.
 - HTTP handlers persist and return message timestamps and image attachments.
 - ModelHub request mapping tests cover text, tool calls, and image attachments.
+- Plan Mode tests cover plan parsing, read-only tool restriction, plan APIs, and persisted completion progress.
 
 ## Delivery Files
 
@@ -287,4 +299,4 @@ First version should include:
 
 ## Open Decisions
 
-No open design decisions remain for the current implementation pass. Future work includes database Run Store, richer Plan Mode, context compaction, subagent delegation, MCP support, full command AST analysis, trace backend integration, and Docker packaging.
+No open design decisions remain for the current implementation pass. Future work includes database Run Store, context compaction, subagent delegation, MCP support, full command AST analysis, trace backend integration, and Docker packaging.

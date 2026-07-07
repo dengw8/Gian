@@ -51,7 +51,7 @@ The first release uses a Fake Model for deterministic development and tests. It 
 35. As a service operator, I want dangerous shell commands rejected, so that the first service does not expose obvious destructive behavior.
 36. As a developer, I want the shell safety policy behind a clear boundary, so that a future AST-based command analyzer can replace the first conservative policy.
 37. As a developer, I want a System Prompt Builder with static and dynamic sections, so that future prompt-cache optimization and context injection have the right shape.
-38. As a developer, I want placeholders or no-op extension middleware for Plan Mode, compaction, and subagent support, so that the architecture follows the source document without forcing full production implementations immediately.
+38. As a developer, I want Plan Mode middleware plus extension points for compaction and subagent support, so that the architecture follows the source document without forcing every broader capability immediately.
 39. As a developer, I want the HTTP API tested from the outside, so that user-visible behavior remains stable while internals evolve.
 40. As a developer, I want the Agent runtime tested with a Fake Model, so that ReAct behavior is deterministic and does not require network access.
 41. As a developer, I want Tool safety tested narrowly, so that dangerous command rejection remains explicit and cheap to verify.
@@ -83,7 +83,7 @@ The first release uses a Fake Model for deterministic development and tests. It 
 - Keep the first shell safety implementation conservative, rejecting destructive commands and command chaining.
 - Include event persistence and safety as real middleware.
 - Include system prompt construction with static and dynamic sections.
-- Keep Plan Mode, context compaction, and subagent support as explicit extension points or minimal no-op middleware in the first release.
+- Implement Run-level Plan Mode while keeping context compaction and subagent support as explicit extension points or minimal no-op middleware.
 - Treat same-Run concurrent Turn submission as outside the business flow, but keep a lightweight `running` status check to reject obvious misuse.
 - Do not add Docker packaging in the first release.
 
@@ -105,7 +105,6 @@ The first release uses a Fake Model for deterministic development and tests. It 
 - Frontend UI.
 - Docker packaging.
 - Database-backed Run Store.
-- Full Plan Mode approval workflow.
 - Production context compaction.
 - MCP integration.
 - Deep subagent recursion.
@@ -132,11 +131,11 @@ The implementation later grew beyond the original first-release scope in a few p
 - Added ModelHub image mapping using `image_url` data URLs.
 - Added a reusable Run Store contract test suite for current and future store implementations.
 - Added local `config.yaml` support for ModelHub AK, with `config.yaml` ignored by git.
+- Added Run-level Plan Mode with read-only planning, explicit execution, persisted Plan State, plan APIs, Web Console controls, and completion tracking.
 
 The following items remain future work from the broader architecture:
 
 - Database-backed Run Store.
-- Full Plan Mode approval workflow.
 - Production context compaction.
 - Subagent delegation beyond no-op extension middleware.
 - MCP integration.

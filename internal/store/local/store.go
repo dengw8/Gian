@@ -125,6 +125,67 @@ func (s *Store) UpdateRun(ctx context.Context, runID string, input store.UpdateR
 	return meta, nil
 }
 
+func (s *Store) GetPlan(ctx context.Context, runID string) (runtime.PlanState, error) {
+	if err := ctx.Err(); err != nil {
+		return runtime.PlanState{}, err
+	}
+	if err := validateRunID(runID); err != nil {
+		return runtime.PlanState{}, err
+	}
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return runtime.PlanState{}, err
+	}
+
+	data, err := os.ReadFile(s.planPath(runID))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return runtime.EmptyPlanState(), nil
+		}
+		return runtime.PlanState{}, err
+	}
+	var plan runtime.PlanState
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return runtime.PlanState{}, err
+	}
+	if plan.Mode == "" {
+		plan.Mode = runtime.PlanModeOff
+	}
+	return plan, nil
+}
+
+func (s *Store) SavePlan(ctx context.Context, runID string, plan runtime.PlanState) (store.RunMetadata, error) {
+	if err := ctx.Err(); err != nil {
+		return store.RunMetadata{}, err
+	}
+	if err := validateRunID(runID); err != nil {
+		return store.RunMetadata{}, err
+	}
+	meta, err := s.GetRun(ctx, runID)
+	if err != nil {
+		return store.RunMetadata{}, err
+	}
+	if plan.Mode == "" {
+		plan.Mode = runtime.PlanModeOff
+	}
+	now := time.Now().UTC()
+	if plan.Mode != runtime.PlanModeOff && plan.CreatedAt.IsZero() {
+		plan.CreatedAt = now
+	}
+	plan.UpdatedAt = now
+
+	if err := s.writePlan(runID, plan); err != nil {
+		return store.RunMetadata{}, err
+	}
+	meta.PlanMode = string(plan.Mode)
+	meta.PlanSteps = len(plan.Steps)
+	meta.PlanCompleted = plan.CompletedCount()
+	meta.UpdatedAt = now
+	if err := s.writeMetadata(meta); err != nil {
+		return store.RunMetadata{}, err
+	}
+	return meta, nil
+}
+
 func (s *Store) AppendMessages(ctx context.Context, runID string, messages []runtime.Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -193,6 +254,10 @@ func (s *Store) eventsPath(runID string) string {
 	return filepath.Join(s.runDir(runID), "events.jsonl")
 }
 
+func (s *Store) planPath(runID string) string {
+	return filepath.Join(s.runDir(runID), "plan.json")
+}
+
 func (s *Store) writeMetadata(meta store.RunMetadata) error {
 	if err := os.MkdirAll(s.runDir(meta.ID), 0o755); err != nil {
 		return err
@@ -203,6 +268,18 @@ func (s *Store) writeMetadata(meta store.RunMetadata) error {
 	}
 	data = append(data, '\n')
 	return os.WriteFile(s.metadataPath(meta.ID), data, 0o644)
+}
+
+func (s *Store) writePlan(runID string, plan runtime.PlanState) error {
+	if err := os.MkdirAll(s.runDir(runID), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(s.planPath(runID), data, 0o644)
 }
 
 func appendJSONLines[T any](path string, values []T) error {

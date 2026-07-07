@@ -34,6 +34,26 @@ func (p *FakeProvider) Generate(ctx context.Context, req Request) (Response, err
 		return Response{}, err
 	}
 
+	if strings.Contains(req.SystemPrompt, "[PLAN MODE ACTIVE]") {
+		return Response{
+			Message: runtime.Message{
+				Role: runtime.RoleAssistant,
+				Content: "Plan:\n" +
+					"1. Inspect the current implementation.\n" +
+					"2. Apply the requested change.\n" +
+					"3. Verify the result with focused tests.",
+			},
+		}, nil
+	}
+	if strings.Contains(req.SystemPrompt, "[EXECUTING PLAN]") {
+		return Response{
+			Message: runtime.Message{
+				Role:    runtime.RoleAssistant,
+				Content: "Executed the next planned step. [DONE:1]",
+			},
+		}, nil
+	}
+
 	if result, ok := lastToolMessage(req.Messages); ok {
 		content := result.Content
 		if content == "" {

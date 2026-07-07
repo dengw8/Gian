@@ -238,7 +238,7 @@ button:focus-visible {
 
 .status-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   padding: 12px 24px;
 }
@@ -278,7 +278,8 @@ button:focus-visible {
 }
 
 .timeline-panel,
-.events-panel {
+.events-panel,
+.plan-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
@@ -287,6 +288,14 @@ button:focus-visible {
   border-radius: 8px;
   background: #ffffff;
   overflow: hidden;
+}
+
+.side-stack {
+  display: grid;
+  grid-template-rows: minmax(180px, 0.44fr) minmax(0, 1fr);
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
 }
 
 .panel-toolbar {
@@ -312,10 +321,71 @@ button:focus-visible {
 }
 
 .timeline,
-.event-stream {
+.event-stream,
+.plan-view {
   min-height: 0;
   overflow: auto;
   padding: 18px;
+}
+
+.plan-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.plan-mode-pill {
+  padding: 4px 9px;
+  border: 1px solid #c9d8ea;
+  border-radius: 999px;
+  color: #344054;
+  background: #f5f9ff;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.plan-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-step {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid #dfe7f0;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.plan-step.completed {
+  color: #667085;
+  background: #eefaf2;
+}
+
+.plan-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #667085;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.plan-step.completed .plan-step-index {
+  background: var(--green);
 }
 
 .empty-state {
@@ -524,6 +594,25 @@ button:focus-visible {
   border-color: #9cc7ff;
   background: #f5f9ff;
   font-weight: 800;
+}
+
+.toggle-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.toggle-field input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
 }
 
 .message-images {

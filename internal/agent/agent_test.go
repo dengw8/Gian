@@ -240,6 +240,117 @@ func TestSafetyMiddlewareRejectsShellBeforeExecution(t *testing.T) {
 	}
 }
 
+func TestRunnerPlanModeExtractsPlanAndFiltersTools(t *testing.T) {
+	registry, err := tools.NewRegistry(
+		tools.NewReadFileTool(t.TempDir()),
+		tools.NewShellTool(t.TempDir()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &requestRecordingProvider{
+		response: runtime.Message{
+			Role:    runtime.RoleAssistant,
+			Content: "Plan:\n1. Inspect the code.\n2. Make the change.",
+		},
+	}
+	runner := NewRunner(Config{
+		Model:      recorder,
+		Tools:      registry,
+		Middleware: []Middleware{PlanModeMiddleware{}},
+	})
+
+	out, err := runner.RunTurn(context.Background(), TurnInput{
+		Message: "plan this",
+		Plan:    runtime.PlanState{Mode: runtime.PlanModePlanning},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(recorder.requests))
+	}
+	if !strings.Contains(recorder.requests[0].SystemPrompt, "[PLAN MODE ACTIVE]") {
+		t.Fatalf("system prompt missing plan mode context: %s", recorder.requests[0].SystemPrompt)
+	}
+	for _, definition := range recorder.requests[0].Tools {
+		if definition.Name != "shell" && (!definition.ReadOnly || definition.Destructive) {
+			t.Fatalf("non-read-only tool advertised in plan mode: %#v", definition)
+		}
+	}
+	if out.Plan.Mode != runtime.PlanModePlanning || len(out.Plan.Steps) != 2 {
+		t.Fatalf("plan = %#v", out.Plan)
+	}
+}
+
+func TestRunnerPlanModeRejectsWriteShellCommand(t *testing.T) {
+	shell := &recordingShellTool{}
+	registry, err := tools.NewRegistry(shell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]string{"command": "touch file.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(Config{
+		Model: &sequenceProvider{responses: []runtime.Message{
+			{
+				Role:      runtime.RoleAssistant,
+				ToolCalls: []runtime.ToolCall{{ID: "call_1", Name: "shell", Arguments: args}},
+			},
+			{Role: runtime.RoleAssistant, Content: "done"},
+		}},
+		MaxIterations: 4,
+		Tools:         registry,
+		Middleware:    []Middleware{PlanModeMiddleware{}},
+	})
+
+	out, err := runner.RunTurn(context.Background(), TurnInput{
+		Message: "shell:touch file.txt",
+		Plan:    runtime.PlanState{Mode: runtime.PlanModePlanning},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shell.executed {
+		t.Fatal("expected plan mode to reject shell command before execution")
+	}
+	if !strings.Contains(out.NewMessages[2].Content, "plan mode") {
+		t.Fatalf("tool message content = %q, want plan mode rejection", out.NewMessages[2].Content)
+	}
+}
+
+func TestRunnerExecutionModeMarksCompletedSteps(t *testing.T) {
+	recorder := &requestRecordingProvider{
+		response: runtime.Message{Role: runtime.RoleAssistant, Content: "Finished the second step. [DONE:2]"},
+	}
+	runner := NewRunner(Config{
+		Model:      recorder,
+		Middleware: []Middleware{PlanModeMiddleware{}},
+	})
+
+	out, err := runner.RunTurn(context.Background(), TurnInput{
+		Message: "continue",
+		Plan: runtime.PlanState{
+			Mode: runtime.PlanModeExecuting,
+			Steps: []runtime.PlanStep{
+				{Index: 1, Text: "First", Status: runtime.PlanStepPending},
+				{Index: 2, Text: "Second", Status: runtime.PlanStepPending},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Plan.Steps[1].Status != runtime.PlanStepCompleted {
+		t.Fatalf("plan = %#v", out.Plan)
+	}
+	if out.Plan.Mode != runtime.PlanModeExecuting {
+		t.Fatalf("mode = %q, want executing until all steps are complete", out.Plan.Mode)
+	}
+}
+
 type recordingMiddleware struct {
 	NoopMiddleware
 	calls     []string
@@ -249,6 +360,11 @@ type recordingMiddleware struct {
 type requestRecordingProvider struct {
 	requests []model.Request
 	response runtime.Message
+}
+
+type sequenceProvider struct {
+	requests  []model.Request
+	responses []runtime.Message
 }
 
 type recordingShellTool struct {
@@ -287,6 +403,16 @@ func (t *recordingShellTool) Execute(ctx context.Context, args json.RawMessage) 
 func (p *requestRecordingProvider) Generate(ctx context.Context, req model.Request) (model.Response, error) {
 	p.requests = append(p.requests, req)
 	return model.Response{Message: p.response}, nil
+}
+
+func (p *sequenceProvider) Generate(ctx context.Context, req model.Request) (model.Response, error) {
+	p.requests = append(p.requests, req)
+	if len(p.responses) == 0 {
+		return model.Response{Message: runtime.Message{Role: runtime.RoleAssistant, Content: "done"}}, nil
+	}
+	response := p.responses[0]
+	p.responses = p.responses[1:]
+	return model.Response{Message: response}, nil
 }
 
 func (m *recordingMiddleware) Name() string {

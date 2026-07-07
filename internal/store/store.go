@@ -23,6 +23,9 @@ type RunMetadata struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 	ModelProvider string    `json:"model_provider"`
 	Error         string    `json:"error,omitempty"`
+	PlanMode      string    `json:"plan_mode,omitempty"`
+	PlanSteps     int       `json:"plan_steps,omitempty"`
+	PlanCompleted int       `json:"plan_completed,omitempty"`
 }
 
 type CreateRunInput struct {
@@ -39,6 +42,8 @@ type RunStore interface {
 	ListRuns(ctx context.Context) ([]RunMetadata, error)
 	GetRun(ctx context.Context, runID string) (RunMetadata, error)
 	UpdateRun(ctx context.Context, runID string, input UpdateRunInput) (RunMetadata, error)
+	GetPlan(ctx context.Context, runID string) (runtime.PlanState, error)
+	SavePlan(ctx context.Context, runID string, plan runtime.PlanState) (RunMetadata, error)
 	AppendMessages(ctx context.Context, runID string, messages []runtime.Message) error
 	ListMessages(ctx context.Context, runID string) ([]runtime.Message, error)
 	AppendEvents(ctx context.Context, runID string, events []runtime.Event) error

@@ -34,6 +34,7 @@ type Server struct {
 type createRunRequest struct {
 	Message     string               `json:"message"`
 	Attachments []runtime.Attachment `json:"attachments,omitempty"`
+	PlanMode    bool                 `json:"plan_mode,omitempty"`
 }
 
 type appendTurnRequest struct {
@@ -41,9 +42,14 @@ type appendTurnRequest struct {
 	Attachments []runtime.Attachment `json:"attachments,omitempty"`
 }
 
+type setPlanModeRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
 type createRunResponse struct {
 	Run      store.RunMetadata `json:"run"`
 	Messages []messageOutput   `json:"messages"`
+	Plan     runtime.PlanState `json:"plan"`
 }
 
 type listRunsResponse struct {
@@ -54,6 +60,7 @@ type appendTurnResponse struct {
 	Run         store.RunMetadata `json:"run"`
 	Messages    []messageOutput   `json:"messages"`
 	NewMessages []messageOutput   `json:"new_messages"`
+	Plan        runtime.PlanState `json:"plan"`
 }
 
 type messageOutput struct {
@@ -94,6 +101,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/runs/{runID}", s.handleGetRun)
 	mux.HandleFunc("GET /v1/runs/{runID}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /v1/runs/{runID}/events", s.handleListEvents)
+	mux.HandleFunc("GET /v1/runs/{runID}/plan", s.handleGetPlan)
+	mux.HandleFunc("POST /v1/runs/{runID}/plan-mode", s.handleSetPlanMode)
+	mux.HandleFunc("POST /v1/runs/{runID}/plan/execute", s.handleExecutePlan)
+	mux.HandleFunc("POST /v1/runs/{runID}/plan/reset", s.handleResetPlan)
 	mux.HandleFunc("POST /v1/runs/{runID}/turns", s.handleAppendTurn)
 	mux.HandleFunc("POST /v1/runs/{runID}/turns/stream", s.handleAppendTurnStream)
 	return mux
@@ -138,14 +149,28 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
+	plan := runtime.EmptyPlanState()
+	if req.PlanMode {
+		plan.Mode = runtime.PlanModePlanning
+		meta, err = s.store.SavePlan(r.Context(), meta.ID, plan)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		plan, _ = s.store.GetPlan(r.Context(), meta.ID)
+		if err := s.store.AppendEvents(r.Context(), meta.ID, []runtime.Event{runtime.NewEvent("plan_mode_enabled", "Plan mode enabled")}); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+	}
 
 	message := strings.TrimSpace(req.Message)
 	if message == "" && len(req.Attachments) == 0 {
-		writeJSON(w, http.StatusCreated, createRunResponse{Run: meta})
+		writeJSON(w, http.StatusCreated, createRunResponse{Run: meta, Plan: plan})
 		return
 	}
 
-	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, nil, nil)
+	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, nil, plan, nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
@@ -154,6 +179,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, createRunResponse{
 		Run:      meta,
 		Messages: toMessageOutput(out.Messages),
+		Plan:     out.Plan,
 	})
 }
 
@@ -190,8 +216,13 @@ func (s *Server) handleAppendTurn(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	plan, err := s.store.GetPlan(r.Context(), runID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 
-	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, history, nil)
+	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, history, plan, nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
@@ -201,6 +232,7 @@ func (s *Server) handleAppendTurn(w http.ResponseWriter, r *http.Request) {
 		Run:         meta,
 		Messages:    toMessageOutput(out.Messages),
 		NewMessages: toMessageOutput(out.NewMessages),
+		Plan:        out.Plan,
 	})
 }
 
@@ -242,14 +274,19 @@ func (s *Server) handleAppendTurnStream(w http.ResponseWriter, r *http.Request) 
 		stream.write(runtime.NewEvent("turn_failed", err.Error()))
 		return
 	}
+	plan, err := s.store.GetPlan(r.Context(), runID)
+	if err != nil {
+		stream.write(runtime.NewEvent("turn_failed", err.Error()))
+		return
+	}
 
-	_, _, err = s.executeTurn(r, meta, message, req.Attachments, history, stream.write)
+	_, _, err = s.executeTurn(r, meta, message, req.Attachments, history, plan, stream.write)
 	if err != nil {
 		return
 	}
 }
 
-func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message string, attachments []runtime.Attachment, history []runtime.Message, sink agent.EventSink) (agent.TurnOutput, store.RunMetadata, error) {
+func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message string, attachments []runtime.Attachment, history []runtime.Message, plan runtime.PlanState, sink agent.EventSink) (agent.TurnOutput, store.RunMetadata, error) {
 	if s.runner == nil {
 		return agent.TurnOutput{}, meta, errors.New("agent runner is not configured")
 	}
@@ -268,6 +305,7 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 		History:     history,
 		Message:     message,
 		Attachments: attachments,
+		Plan:        plan,
 		Events: func(event runtime.Event) error {
 			return s.emitAndPersist(r, meta.ID, event, sink)
 		},
@@ -285,6 +323,10 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 	}
 
 	if err := s.store.AppendMessages(r.Context(), meta.ID, out.NewMessages); err != nil {
+		return agent.TurnOutput{}, meta, err
+	}
+	meta, err = s.store.SavePlan(r.Context(), meta.ID, out.Plan)
+	if err != nil {
 		return agent.TurnOutput{}, meta, err
 	}
 	if err := s.emitAndPersist(r, meta.ID, runtime.NewEvent("turn_completed", "Turn completed"), sink); err != nil {
@@ -331,6 +373,102 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
+	plan, err := s.store.GetPlan(r.Context(), r.PathValue("runID"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+func (s *Server) handleSetPlanMode(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("runID")
+	var req setPlanModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid JSON request body"})
+		return
+	}
+	plan, err := s.store.GetPlan(r.Context(), runID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if req.Enabled {
+		plan.Mode = runtime.PlanModePlanning
+	} else {
+		plan.Mode = runtime.PlanModeOff
+	}
+	meta, err := s.store.SavePlan(r.Context(), runID, plan)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	eventType := "plan_mode_disabled"
+	message := "Plan mode disabled"
+	if req.Enabled {
+		eventType = "plan_mode_enabled"
+		message = "Plan mode enabled"
+	}
+	if err := s.store.AppendEvents(r.Context(), runID, []runtime.Event{runtime.NewEvent(eventType, message)}); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Run  store.RunMetadata `json:"run"`
+		Plan runtime.PlanState `json:"plan"`
+	}{Run: meta, Plan: plan})
+}
+
+func (s *Server) handleExecutePlan(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("runID")
+	plan, err := s.store.GetPlan(r.Context(), runID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if len(plan.Steps) == 0 {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "plan has no steps to execute"})
+		return
+	}
+	plan.Mode = runtime.PlanModeExecuting
+	meta, err := s.store.SavePlan(r.Context(), runID, plan)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if err := s.store.AppendEvents(r.Context(), runID, []runtime.Event{runtime.NewEvent("plan_execution_started", "Plan execution started")}); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Run  store.RunMetadata `json:"run"`
+		Plan runtime.PlanState `json:"plan"`
+	}{Run: meta, Plan: plan})
+}
+
+func (s *Server) handleResetPlan(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("runID")
+	meta, err := s.store.SavePlan(r.Context(), runID, runtime.EmptyPlanState())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	plan, err := s.store.GetPlan(r.Context(), runID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if err := s.store.AppendEvents(r.Context(), runID, []runtime.Event{runtime.NewEvent("plan_reset", "Plan reset")}); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Run  store.RunMetadata `json:"run"`
+		Plan runtime.PlanState `json:"plan"`
+	}{Run: meta, Plan: plan})
 }
 
 func writeStoreError(w http.ResponseWriter, err error) {
