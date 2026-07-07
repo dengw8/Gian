@@ -1,0 +1,67 @@
+CONTEXT.md
+  s_94c3d41f0ddb1b::t_62ec151fbbbfaa 43-54
+README.md
+  s_94c3d41f0ddb1b::t_96c322ea46c64b 178-185,282-315,357,379
+docs/adr/0007-run-level-plan-mode.md
+  s_94c3d41f0ddb1b::t_e1dfc06a5ef680 1-9
+docs/superpowers/prds/2026-07-06-agent-service-prd.md
+  s_94c3d41f0ddb1b::t_763bbe9fb6db90 54,86,134
+docs/superpowers/specs/2026-07-06-agent-service-design.md
+  s_94c3d41f0ddb1b::t_f86cc4dd7c1812 23,76-83,94,174-175,244,286,302
+docs/superpowers/specs/2026-07-07-plan-mode-design.md
+  s_94c3d41f0ddb1b::t_10092958e366bc 1-44
+internal/agent/agent.go
+  s_94c3d41f0ddb1b::t_17c1d403112085 34,41,76,90,115-117,122,157-191
+internal/agent/agent_test.go
+  s_94c3d41f0ddb1b::t_2e9106446fe38c 243-353,365-369,408-417
+internal/agent/extensions.go
+  s_94c3d41f0ddb1b::t_bc12cabc484b93 3-12,21-77
+internal/agent/middleware.go
+  s_94c3d41f0ddb1b::t_5b23757a7e545d 14-15
+internal/agent/plan.go
+  s_94c3d41f0ddb1b::t_3082fa5df0e8e7 1-68
+internal/model/model.go
+  s_94c3d41f0ddb1b::t_b1a1cec449482c 37-56
+internal/runtime/types.go
+  s_94c3d41f0ddb1b::t_d9a610fb536ce3 68-113
+internal/server/server.go
+  s_94c3d41f0ddb1b::t_259120f0483093 37,45-48,52,63,104-107,152-165,169,173,182,219-223,225,235,277-281,283,289,308,328-331,378-473
+internal/server/server_test.go
+  s_94c3d41f0ddb1b::t_8a4f98ad5c0cc0 226-280
+internal/server/web/app.js
+  s_94c3d41f0ddb1b::t_7c19d519b20e7d 8,28-31,35,60-62,109,112,134,148-150,188-250,267,270,288,333,366,372-378,401-403,410-480,788-789,795
+internal/server/web/index.html
+  s_94c3d41f0ddb1b::t_bb683d3f763b13 57-60,81-92,94-102,116-119
+internal/server/web/styles.css
+  s_94c3d41f0ddb1b::t_a64fa00a6d1f50 241,281-282,293-300,324-325,331-390,599-617
+internal/store/local/store.go
+  s_94c3d41f0ddb1b::t_603c7da3715dd8 128-188,257-260,273-284
+internal/store/local/store_test.go
+  s_94c3d41f0ddb1b::t_fd2fef8d587871 39-43
+internal/store/store.go
+  s_94c3d41f0ddb1b::t_88a258fc216d86 26-28,45-46
+internal/store/storetest/contract.go
+  s_94c3d41f0ddb1b::t_6661914dcfef44 127-171
+internal/tools/shell.go
+  s_94c3d41f0ddb1b::t_4a5f42a5e25608 113-130,143-165
+internal/tools/shell_test.go
+  s_94c3d41f0ddb1b::t_3c84d1dd4f06ee 51-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "d8fed80fe9b16ffe6355ada19267dc138ec8be10",
+  "prompts": {},
+  "sessions": {
+    "s_94c3d41f0ddb1b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f375d-3481-7020-aebc-dd3378c4da09",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
