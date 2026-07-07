@@ -96,11 +96,11 @@ func (p *ModelHubProvider) Generate(ctx context.Context, req Request) (Response,
 		return Response{}, fmt.Errorf("modelhub provider returned %s: %s", httpResp.Status, strings.TrimSpace(string(respBody)))
 	}
 
-	msg, err := parseModelHubMessage(respBody)
+	msg, usage, err := parseModelHubResponse(respBody)
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{Message: msg}, nil
+	return Response{Message: msg, Usage: usage}, nil
 }
 
 func (p *ModelHubProvider) endpointWithAK() string {
@@ -194,6 +194,7 @@ func modelHubContent(text string, attachments []runtime.Attachment) []modelHubCo
 
 type modelHubResponse struct {
 	Choices []modelHubChoice `json:"choices"`
+	Usage   openAIUsage      `json:"usage,omitempty"`
 }
 
 type modelHubChoice struct {
@@ -206,24 +207,24 @@ type modelHubResponseMessage struct {
 	ToolCalls []openAIToolCall `json:"tool_calls,omitempty"`
 }
 
-func parseModelHubMessage(data []byte) (runtime.Message, error) {
+func parseModelHubResponse(data []byte) (runtime.Message, *runtime.TokenUsage, error) {
 	var parsed modelHubResponse
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return runtime.Message{}, err
+		return runtime.Message{}, nil, err
 	}
 	if len(parsed.Choices) == 0 {
-		return runtime.Message{}, fmt.Errorf("modelhub provider returned no choices")
+		return runtime.Message{}, nil, fmt.Errorf("modelhub provider returned no choices")
 	}
 	message := parsed.Choices[0].Message
 	content, err := parseModelHubContent(message.Content)
 	if err != nil {
-		return runtime.Message{}, err
+		return runtime.Message{}, nil, err
 	}
 	return runtime.Message{
 		Role:      runtime.RoleAssistant,
 		Content:   content,
 		ToolCalls: fromOpenAIToolCalls(message.ToolCalls),
-	}, nil
+	}, parsed.Usage.toTokenUsage(), nil
 }
 
 func parseModelHubContent(data json.RawMessage) (string, error) {

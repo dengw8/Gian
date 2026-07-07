@@ -21,6 +21,7 @@ type Message struct {
 	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	CreatedAt   time.Time    `json:"created_at,omitempty"`
+	Usage       *TokenUsage  `json:"usage,omitempty"`
 }
 
 type Attachment struct {
@@ -31,9 +32,10 @@ type Attachment struct {
 }
 
 type Event struct {
-	Type      string    `json:"type"`
-	CreatedAt time.Time `json:"created_at"`
-	Message   string    `json:"message,omitempty"`
+	Type      string      `json:"type"`
+	CreatedAt time.Time   `json:"created_at"`
+	Message   string      `json:"message,omitempty"`
+	Usage     *TokenUsage `json:"usage,omitempty"`
 }
 
 func NewEvent(eventType string, message string) Event {
@@ -42,6 +44,15 @@ func NewEvent(eventType string, message string) Event {
 		CreatedAt: time.Now().UTC(),
 		Message:   message,
 	}
+}
+
+type TokenUsage struct {
+	PromptTokens     *int           `json:"prompt_tokens,omitempty"`
+	CompletionTokens *int           `json:"completion_tokens,omitempty"`
+	TotalTokens      *int           `json:"total_tokens,omitempty"`
+	CachedTokens     *int           `json:"cached_tokens,omitempty"`
+	ReasoningTokens  *int           `json:"reasoning_tokens,omitempty"`
+	Raw              map[string]any `json:"raw,omitempty"`
 }
 
 type ToolCall struct {

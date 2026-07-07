@@ -132,6 +132,8 @@ The implementation later grew beyond the original first-release scope in a few p
 - Added a reusable Run Store contract test suite for current and future store implementations.
 - Added local `config.yaml` support for ModelHub AK, with `config.yaml` ignored by git.
 - Added Run-level Plan Mode with read-only planning, explicit execution, persisted Plan State, plan APIs, Web Console controls, and completion tracking.
+- Reworked System Prompt construction around static and dynamic sections for prompt-cache friendliness.
+- Added provider token usage collection, including cached token counts when returned by the model API.
 
 The following items remain future work from the broader architecture:
 

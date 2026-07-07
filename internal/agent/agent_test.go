@@ -35,6 +35,28 @@ func TestRunnerCompletesNoToolTurnWithFakeModel(t *testing.T) {
 	assertMessagesHaveTimes(t, out.NewMessages)
 }
 
+func TestSystemPromptUsesStaticDynamicBoundary(t *testing.T) {
+	prompt := NewSystemPromptBuilder().
+		WithTools([]runtime.ToolDefinition{{
+			Name:        "read_file",
+			Description: "Read a file",
+			ReadOnly:    true,
+		}}).
+		WithPlan(runtime.PlanState{Mode: runtime.PlanModePlanning}).
+		Build()
+
+	roleIndex := strings.Index(prompt, "# Role")
+	boundaryIndex := strings.Index(prompt, dynamicContextBoundary)
+	toolsIndex := strings.Index(prompt, "# Available Tools")
+	planIndex := strings.Index(prompt, "# Plan Mode Context")
+	if roleIndex < 0 || boundaryIndex < 0 || toolsIndex < 0 || planIndex < 0 {
+		t.Fatalf("prompt missing expected sections:\n%s", prompt)
+	}
+	if !(roleIndex < boundaryIndex && boundaryIndex < toolsIndex && toolsIndex < planIndex) {
+		t.Fatalf("unexpected prompt order: role=%d boundary=%d tools=%d plan=%d\n%s", roleIndex, boundaryIndex, toolsIndex, planIndex, prompt)
+	}
+}
+
 func TestRunnerCallsMiddlewareLifecycleForNoToolTurn(t *testing.T) {
 	recorder := &recordingMiddleware{}
 	runner := NewRunner(Config{

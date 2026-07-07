@@ -39,6 +39,7 @@ type TurnOutput struct {
 	Messages    []runtime.Message `json:"messages"`
 	NewMessages []runtime.Message `json:"new_messages"`
 	Plan        runtime.PlanState `json:"plan"`
+	Events      []runtime.Event   `json:"events,omitempty"`
 }
 
 type EventSink func(event runtime.Event) error
@@ -76,6 +77,11 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 		Plan:     normalizePlan(input.Plan),
 	}
 	newMessageStart := len(history)
+	events := []runtime.Event{}
+	eventSink := func(event runtime.Event) error {
+		events = append(events, event)
+		return emit(input.Events, event)
+	}
 
 	if err := r.beforeAgent(ctx, state); err != nil {
 		return TurnOutput{}, err
@@ -86,7 +92,10 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 
 	for i := 0; i < r.maxIterations; i++ {
 		toolDefinitions := r.toolDefinitions()
-		state.SystemPrompt = r.systemPrompt(toolDefinitions)
+		if state.Plan.Mode == runtime.PlanModePlanning {
+			toolDefinitions = planningTools(toolDefinitions)
+		}
+		state.SystemPrompt = r.systemPrompt(toolDefinitions, state.Plan)
 		state.ActiveTools = toolDefinitions
 		req := model.Request{
 			SystemPrompt: state.SystemPrompt,
@@ -97,22 +106,23 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 			return TurnOutput{}, err
 		}
 
-		if err := emit(input.Events, runtime.NewEvent("model_started", "Model started")); err != nil {
+		if err := eventSink(runtime.NewEvent("model_started", "Model started")); err != nil {
 			return TurnOutput{}, err
 		}
 		resp, err := r.model.Generate(ctx, req)
 		if err != nil {
 			return TurnOutput{}, err
 		}
-		if err := emit(input.Events, runtime.NewEvent("model_completed", "Model completed")); err != nil {
+		if err := eventSink(modelCompletedEvent(resp.Usage)); err != nil {
 			return TurnOutput{}, err
 		}
 		if err := r.afterModel(ctx, &resp, state); err != nil {
 			return TurnOutput{}, err
 		}
 
+		resp.Message.Usage = resp.Usage
 		state.Messages = append(state.Messages, timestampMessage(resp.Message))
-		if err := r.updatePlanFromAssistant(input.Events, state, resp.Message); err != nil {
+		if err := r.updatePlanFromAssistant(eventSink, state, resp.Message); err != nil {
 			return TurnOutput{}, err
 		}
 		if len(resp.Message.ToolCalls) == 0 {
@@ -120,14 +130,15 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 				Messages:    append([]runtime.Message(nil), state.Messages...),
 				NewMessages: append([]runtime.Message(nil), state.Messages[newMessageStart:]...),
 				Plan:        state.Plan,
+				Events:      append([]runtime.Event(nil), events...),
 			}, nil
 		}
 		for _, call := range resp.Message.ToolCalls {
-			if err := emit(input.Events, runtime.NewEvent("tool_started", call.Name)); err != nil {
+			if err := eventSink(runtime.NewEvent("tool_started", call.Name)); err != nil {
 				return TurnOutput{}, err
 			}
 			result := r.executeTool(ctx, call, state)
-			if err := emit(input.Events, runtime.NewEvent("tool_completed", result.Name)); err != nil {
+			if err := eventSink(runtime.NewEvent("tool_completed", result.Name)); err != nil {
 				return TurnOutput{}, err
 			}
 			content := result.Content
@@ -196,6 +207,12 @@ func emit(sink EventSink, event runtime.Event) error {
 	return sink(event)
 }
 
+func modelCompletedEvent(usage *runtime.TokenUsage) runtime.Event {
+	event := runtime.NewEvent("model_completed", "Model completed")
+	event.Usage = usage
+	return event
+}
+
 func (r *Runner) executeTool(ctx context.Context, call runtime.ToolCall, state *State) runtime.ToolResult {
 	result := runtime.ToolResult{
 		ToolCallID: call.ID,
@@ -229,12 +246,12 @@ func (r *Runner) toolDefinitions() []runtime.ToolDefinition {
 	return r.tools.Definitions()
 }
 
-func (r *Runner) systemPrompt(definitions []runtime.ToolDefinition) string {
+func (r *Runner) systemPrompt(definitions []runtime.ToolDefinition, plan runtime.PlanState) string {
 	builder := r.promptBuilder
 	if len(builder.StaticSections) == 0 {
 		builder = NewSystemPromptBuilder()
 	}
-	return builder.WithTools(definitions).Build()
+	return builder.WithTools(definitions).WithPlan(plan).Build()
 }
 
 func (r *Runner) beforeAgent(ctx context.Context, state *State) error {

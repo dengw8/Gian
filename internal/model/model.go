@@ -20,7 +20,8 @@ type Request struct {
 }
 
 type Response struct {
-	Message runtime.Message `json:"message"`
+	Message runtime.Message     `json:"message"`
+	Usage   *runtime.TokenUsage `json:"usage,omitempty"`
 }
 
 type FakeProvider struct{}

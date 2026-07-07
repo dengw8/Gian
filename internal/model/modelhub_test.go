@@ -32,6 +32,14 @@ func TestModelHubProviderMapsTextResponse(t *testing.T) {
 					Content: json.RawMessage(`"2"`),
 				},
 			}},
+			Usage: openAIUsage{
+				PromptTokens:     intPtr(16),
+				CompletionTokens: intPtr(5),
+				TotalTokens:      intPtr(21),
+				PromptTokensDetails: openAIPromptTokenDetails{
+					CachedTokens: intPtr(7),
+				},
+			},
 		})
 	}))
 	defer server.Close()
@@ -85,6 +93,12 @@ func TestModelHubProviderMapsTextResponse(t *testing.T) {
 	}
 	if len(captured.Tools) != 1 || captured.Tools[0].Function.Name != "read_file" {
 		t.Fatalf("tools = %#v", captured.Tools)
+	}
+	if resp.Usage == nil {
+		t.Fatal("expected usage")
+	}
+	if *resp.Usage.PromptTokens != 16 || *resp.Usage.CachedTokens != 7 {
+		t.Fatalf("usage = %#v", resp.Usage)
 	}
 }
 

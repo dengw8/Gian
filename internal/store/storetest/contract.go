@@ -81,6 +81,32 @@ func RunStoreContract(t *testing.T, newStore Factory) {
 		if updated.UpdatedAt.Before(meta.UpdatedAt) {
 			t.Fatalf("updated_at moved backwards: before=%s after=%s", meta.UpdatedAt, updated.UpdatedAt)
 		}
+
+		updated, err = runStore.UpdateRun(context.Background(), meta.ID, store.UpdateRunInput{
+			Status: store.RunStatusCompleted,
+			AddUsage: &runtime.TokenUsage{
+				PromptTokens:     intPtr(10),
+				CompletionTokens: intPtr(3),
+				TotalTokens:      intPtr(13),
+				CachedTokens:     intPtr(4),
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated, err = runStore.UpdateRun(context.Background(), meta.ID, store.UpdateRunInput{
+			Status: store.RunStatusCompleted,
+			AddUsage: &runtime.TokenUsage{
+				PromptTokens: intPtr(2),
+				TotalTokens:  intPtr(2),
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated.TokenUsage == nil || *updated.TokenUsage.PromptTokens != 12 || *updated.TokenUsage.TotalTokens != 15 || *updated.TokenUsage.CachedTokens != 4 {
+			t.Fatalf("token usage = %#v", updated.TokenUsage)
+		}
 	})
 
 	t.Run("messages and events", func(t *testing.T) {
@@ -197,4 +223,8 @@ func RunStoreContract(t *testing.T, newStore Factory) {
 			t.Fatalf("runs order = %#v, want updated run first", runs)
 		}
 	})
+}
+
+func intPtr(value int) *int {
+	return &value
 }

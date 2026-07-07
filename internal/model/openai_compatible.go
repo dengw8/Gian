@@ -90,7 +90,10 @@ func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req Request) (R
 	if len(parsed.Choices) == 0 {
 		return Response{}, fmt.Errorf("openai-compatible provider returned no choices")
 	}
-	return Response{Message: fromOpenAIMessage(parsed.Choices[0].Message)}, nil
+	return Response{
+		Message: fromOpenAIMessage(parsed.Choices[0].Message),
+		Usage:   parsed.Usage.toTokenUsage(),
+	}, nil
 }
 
 type openAIChatRequest struct {
@@ -131,10 +134,58 @@ type openAIToolFunction struct {
 
 type openAIChatResponse struct {
 	Choices []openAIChoice `json:"choices"`
+	Usage   openAIUsage    `json:"usage,omitempty"`
 }
 
 type openAIChoice struct {
 	Message openAIMessage `json:"message"`
+}
+
+type openAIUsage struct {
+	PromptTokens            *int                     `json:"prompt_tokens,omitempty"`
+	CompletionTokens        *int                     `json:"completion_tokens,omitempty"`
+	TotalTokens             *int                     `json:"total_tokens,omitempty"`
+	PromptTokensDetails     openAIPromptTokenDetails `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails openAICompletionDetails  `json:"completion_tokens_details,omitempty"`
+	Raw                     map[string]any           `json:"-"`
+}
+
+type openAIPromptTokenDetails struct {
+	CachedTokens *int `json:"cached_tokens,omitempty"`
+	AudioTokens  *int `json:"audio_tokens,omitempty"`
+}
+
+type openAICompletionDetails struct {
+	ReasoningTokens *int `json:"reasoning_tokens,omitempty"`
+	AudioTokens     *int `json:"audio_tokens,omitempty"`
+}
+
+func (u *openAIUsage) UnmarshalJSON(data []byte) error {
+	type alias openAIUsage
+	var parsed alias
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err == nil {
+		parsed.Raw = raw
+	}
+	*u = openAIUsage(parsed)
+	return nil
+}
+
+func (u openAIUsage) toTokenUsage() *runtime.TokenUsage {
+	if u.PromptTokens == nil && u.CompletionTokens == nil && u.TotalTokens == nil && u.PromptTokensDetails.CachedTokens == nil && u.CompletionTokensDetails.ReasoningTokens == nil && len(u.Raw) == 0 {
+		return nil
+	}
+	return &runtime.TokenUsage{
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		TotalTokens:      u.TotalTokens,
+		CachedTokens:     u.PromptTokensDetails.CachedTokens,
+		ReasoningTokens:  u.CompletionTokensDetails.ReasoningTokens,
+		Raw:              u.Raw,
+	}
 }
 
 func toOpenAIMessages(req Request) []openAIMessage {

@@ -38,6 +38,7 @@ const el = {
   sendButton: document.querySelector("#sendButton"),
   streamButton: document.querySelector("#streamButton"),
   toast: document.querySelector("#toast"),
+  tokenUsage: document.querySelector("#tokenUsage"),
   updatedAt: document.querySelector("#updatedAt"),
 };
 
@@ -363,6 +364,7 @@ function selectRun(run) {
   el.runIdInput.value = run.id;
   el.runStatus.textContent = run.status || "-";
   el.modelProvider.textContent = run.model_provider || "-";
+  el.tokenUsage.textContent = formatUsageSummary(run.token_usage);
   el.planStatus.textContent = planLabelFromRun(run);
   el.updatedAt.textContent = formatDate(run.updated_at);
   upsertRun(run);
@@ -548,6 +550,14 @@ function appendMessageCard(message) {
   time.textContent = formatDate(message.created_at);
   meta.append(time);
 
+  if (message.usage) {
+    const usage = document.createElement("span");
+    usage.className = "message-usage";
+    usage.textContent = formatCompactUsage(message.usage);
+    usage.title = formatUsageSummary(message.usage);
+    meta.append(usage);
+  }
+
   if (message.pending_state || message.role === "tool") {
     const pill = document.createElement("span");
     pill.className = "status-pill";
@@ -633,10 +643,35 @@ function renderEvents() {
     body.className = "code-block";
     body.textContent = event.message || formatJSON(event);
 
-    card.append(type, time, body);
+    card.append(type, time);
+    if (event.usage) {
+      card.append(renderUsageDetails(event.usage));
+    }
+    card.append(body);
     el.eventStream.append(card);
   });
   el.eventStream.scrollTop = el.eventStream.scrollHeight;
+}
+
+function renderUsageDetails(usage) {
+  const grid = document.createElement("div");
+  grid.className = "usage-grid";
+  [
+    ["Prompt", usage.prompt_tokens],
+    ["Completion", usage.completion_tokens],
+    ["Total", usage.total_tokens],
+    ["Cached", usage.cached_tokens],
+    ["Reasoning", usage.reasoning_tokens],
+  ].forEach(([label, value]) => {
+    if (value === undefined || value === null) {
+      return;
+    }
+    const item = document.createElement("span");
+    item.className = "usage-chip";
+    item.textContent = `${label}: ${value}`;
+    grid.append(item);
+  });
+  return grid;
 }
 
 async function handleImageSelection(event) {
@@ -751,6 +786,43 @@ function formatDate(value) {
     return value;
   }
   return date.toLocaleString();
+}
+
+function formatUsageSummary(usage) {
+  if (!usage) {
+    return "-";
+  }
+  const parts = [];
+  if (usage.total_tokens !== undefined && usage.total_tokens !== null) {
+    parts.push(`total ${usage.total_tokens}`);
+  }
+  if (usage.prompt_tokens !== undefined && usage.prompt_tokens !== null) {
+    parts.push(`prompt ${usage.prompt_tokens}`);
+  }
+  if (usage.cached_tokens !== undefined && usage.cached_tokens !== null) {
+    parts.push(`cached ${usage.cached_tokens}`);
+  }
+  return parts.length ? parts.join(" / ") : "-";
+}
+
+function formatCompactUsage(usage) {
+  if (!usage) {
+    return "-";
+  }
+  const parts = [];
+  if (usage.total_tokens !== undefined && usage.total_tokens !== null) {
+    parts.push(`T ${usage.total_tokens}`);
+  }
+  if (usage.prompt_tokens !== undefined && usage.prompt_tokens !== null) {
+    parts.push(`P ${usage.prompt_tokens}`);
+  }
+  if (usage.cached_tokens !== undefined && usage.cached_tokens !== null) {
+    parts.push(`C ${usage.cached_tokens}`);
+  }
+  if (usage.completion_tokens !== undefined && usage.completion_tokens !== null) {
+    parts.push(`O ${usage.completion_tokens}`);
+  }
+  return parts.length ? parts.join(" / ") : "-";
 }
 
 async function copyCurrentRunId() {

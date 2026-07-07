@@ -68,6 +68,61 @@ func TestCreateRunCompletesNoToolTurn(t *testing.T) {
 	}
 }
 
+func TestCreateRunPersistsTokenUsageInMetadataAndEvents(t *testing.T) {
+	usage := &runtime.TokenUsage{
+		PromptTokens:     intPtr(10),
+		CompletionTokens: intPtr(3),
+		TotalTokens:      intPtr(13),
+		CachedTokens:     intPtr(4),
+	}
+	runStore := local.New(t.TempDir())
+	srv := New(Config{
+		Runner:        agent.NewRunner(agent.Config{Model: usageProvider{usage: usage}}),
+		Store:         runStore,
+		ModelProvider: "usage-test",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs", bytes.NewBufferString(`{"message":"hello"}`))
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp createRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Run.TokenUsage == nil || *resp.Run.TokenUsage.PromptTokens != 10 || *resp.Run.TokenUsage.CachedTokens != 4 {
+		t.Fatalf("response token usage = %#v", resp.Run.TokenUsage)
+	}
+	if len(resp.Messages) != 2 || resp.Messages[1].Usage == nil || *resp.Messages[1].Usage.TotalTokens != 13 {
+		t.Fatalf("response message usage = %#v", resp.Messages)
+	}
+
+	messages, err := runStore.ListMessages(context.Background(), resp.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 || messages[1].Usage == nil || *messages[1].Usage.CachedTokens != 4 {
+		t.Fatalf("stored message usage = %#v", messages)
+	}
+
+	events, err := runStore.ListEvents(context.Background(), resp.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var modelCompleted *runtime.Event
+	for i := range events {
+		if events[i].Type == "model_completed" {
+			modelCompleted = &events[i]
+			break
+		}
+	}
+	if modelCompleted == nil || modelCompleted.Usage == nil || *modelCompleted.Usage.TotalTokens != 13 {
+		t.Fatalf("model_completed event = %#v", modelCompleted)
+	}
+}
+
 func TestServesEmbeddedConsoleApp(t *testing.T) {
 	srv := New(Config{
 		Runner:        agent.NewRunner(agent.Config{Model: model.NewFakeProvider()}),
@@ -601,6 +656,17 @@ type failingProvider struct {
 	err error
 }
 
+type usageProvider struct {
+	usage *runtime.TokenUsage
+}
+
+func (p usageProvider) Generate(ctx context.Context, req model.Request) (model.Response, error) {
+	return model.Response{
+		Message: runtime.Message{Role: runtime.RoleAssistant, Content: "done"},
+		Usage:   p.usage,
+	}, nil
+}
+
 func (p failingProvider) Generate(ctx context.Context, req model.Request) (model.Response, error) {
 	return model.Response{}, p.err
 }
@@ -620,4 +686,8 @@ func hasEventType(events []runtime.Event, eventType string) bool {
 		}
 	}
 	return false
+}
+
+func intPtr(value int) *int {
+	return &value
 }

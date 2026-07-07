@@ -118,11 +118,39 @@ func (s *Store) UpdateRun(ctx context.Context, runID string, input store.UpdateR
 	}
 	meta.Status = input.Status
 	meta.Error = input.Error
+	meta.TokenUsage = addUsage(meta.TokenUsage, input.AddUsage)
 	meta.UpdatedAt = time.Now().UTC()
 	if err := s.writeMetadata(meta); err != nil {
 		return store.RunMetadata{}, err
 	}
 	return meta, nil
+}
+
+func addUsage(current *runtime.TokenUsage, next *runtime.TokenUsage) *runtime.TokenUsage {
+	if next == nil {
+		return current
+	}
+	sum := runtime.TokenUsage{}
+	if current != nil {
+		sum = *current
+	}
+	sum.PromptTokens = addIntPointers(sum.PromptTokens, next.PromptTokens)
+	sum.CompletionTokens = addIntPointers(sum.CompletionTokens, next.CompletionTokens)
+	sum.TotalTokens = addIntPointers(sum.TotalTokens, next.TotalTokens)
+	sum.CachedTokens = addIntPointers(sum.CachedTokens, next.CachedTokens)
+	sum.ReasoningTokens = addIntPointers(sum.ReasoningTokens, next.ReasoningTokens)
+	return &sum
+}
+
+func addIntPointers(a *int, b *int) *int {
+	if b == nil {
+		return a
+	}
+	value := *b
+	if a != nil {
+		value += *a
+	}
+	return &value
 }
 
 func (s *Store) GetPlan(ctx context.Context, runID string) (runtime.PlanState, error) {

@@ -261,10 +261,26 @@ data: {...}
 
 Streamed events are also persisted.
 
+`model_completed` events include per-call `usage` when the configured Model Provider returns token accounting. Providers that do not return usage leave the field absent.
+
 ### Fetch Run Metadata
 
 ```bash
 curl -sS "$BASE/v1/runs/$RUN_ID"
+```
+
+Run metadata includes cumulative `token_usage` when usage is available:
+
+```json
+{
+  "token_usage": {
+    "prompt_tokens": 16,
+    "completion_tokens": 5,
+    "total_tokens": 21,
+    "cached_tokens": 0,
+    "reasoning_tokens": 0
+  }
+}
 ```
 
 ### Fetch Messages
@@ -361,6 +377,13 @@ data/runs/<run_id>/
 
 `messages.jsonl` and `events.jsonl` are append-only JSON Lines files.
 
+Token usage is persisted in two places:
+
+- Per model call on `model_completed` events in `events.jsonl`.
+- Cumulative Run totals on `metadata.json`.
+
+`cached_tokens` is populated from provider usage details when the provider reports prompt-cache hits.
+
 ## Current Scope
 
 Implemented:
@@ -377,6 +400,7 @@ Implemented:
 - OpenAI-Compatible Provider
 - ModelHub Provider
 - Run-level Plan Mode
+- Provider token/cache usage collection
 - Workspace Tools
 - Shell Tool with conservative safety policy
 - Message timestamps

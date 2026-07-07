@@ -71,6 +71,7 @@ type messageOutput struct {
 	ToolCalls   []runtime.ToolCall   `json:"tool_calls,omitempty"`
 	Attachments []runtime.Attachment `json:"attachments,omitempty"`
 	CreatedAt   time.Time            `json:"created_at,omitempty"`
+	Usage       *runtime.TokenUsage  `json:"usage,omitempty"`
 }
 
 type errorResponse struct {
@@ -325,6 +326,12 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 	if err := s.store.AppendMessages(r.Context(), meta.ID, out.NewMessages); err != nil {
 		return agent.TurnOutput{}, meta, err
 	}
+	if usage := totalUsage(out.Events); usage != nil {
+		meta, err = s.store.UpdateRun(r.Context(), meta.ID, store.UpdateRunInput{Status: meta.Status, Error: meta.Error, AddUsage: usage})
+		if err != nil {
+			return agent.TurnOutput{}, meta, err
+		}
+	}
 	meta, err = s.store.SavePlan(r.Context(), meta.ID, out.Plan)
 	if err != nil {
 		return agent.TurnOutput{}, meta, err
@@ -337,6 +344,44 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 		return agent.TurnOutput{}, meta, err
 	}
 	return out, meta, nil
+}
+
+func totalUsage(events []runtime.Event) *runtime.TokenUsage {
+	var total *runtime.TokenUsage
+	for _, event := range events {
+		if event.Usage == nil {
+			continue
+		}
+		total = addUsage(total, event.Usage)
+	}
+	return total
+}
+
+func addUsage(current *runtime.TokenUsage, next *runtime.TokenUsage) *runtime.TokenUsage {
+	if next == nil {
+		return current
+	}
+	sum := runtime.TokenUsage{}
+	if current != nil {
+		sum = *current
+	}
+	sum.PromptTokens = addIntPointers(sum.PromptTokens, next.PromptTokens)
+	sum.CompletionTokens = addIntPointers(sum.CompletionTokens, next.CompletionTokens)
+	sum.TotalTokens = addIntPointers(sum.TotalTokens, next.TotalTokens)
+	sum.CachedTokens = addIntPointers(sum.CachedTokens, next.CachedTokens)
+	sum.ReasoningTokens = addIntPointers(sum.ReasoningTokens, next.ReasoningTokens)
+	return &sum
+}
+
+func addIntPointers(a *int, b *int) *int {
+	if b == nil {
+		return a
+	}
+	value := *b
+	if a != nil {
+		value += *a
+	}
+	return &value
 }
 
 func (s *Server) emitAndPersist(r *http.Request, runID string, event runtime.Event, sink agent.EventSink) error {
@@ -490,6 +535,7 @@ func toMessageOutput(messages []runtime.Message) []messageOutput {
 			ToolCalls:   msg.ToolCalls,
 			Attachments: msg.Attachments,
 			CreatedAt:   msg.CreatedAt,
+			Usage:       msg.Usage,
 		})
 	}
 	return output

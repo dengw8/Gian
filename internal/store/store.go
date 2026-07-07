@@ -17,15 +17,16 @@ const (
 )
 
 type RunMetadata struct {
-	ID            string    `json:"id"`
-	Status        RunStatus `json:"status"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	ModelProvider string    `json:"model_provider"`
-	Error         string    `json:"error,omitempty"`
-	PlanMode      string    `json:"plan_mode,omitempty"`
-	PlanSteps     int       `json:"plan_steps,omitempty"`
-	PlanCompleted int       `json:"plan_completed,omitempty"`
+	ID            string              `json:"id"`
+	Status        RunStatus           `json:"status"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
+	ModelProvider string              `json:"model_provider"`
+	Error         string              `json:"error,omitempty"`
+	PlanMode      string              `json:"plan_mode,omitempty"`
+	PlanSteps     int                 `json:"plan_steps,omitempty"`
+	PlanCompleted int                 `json:"plan_completed,omitempty"`
+	TokenUsage    *runtime.TokenUsage `json:"token_usage,omitempty"`
 }
 
 type CreateRunInput struct {
@@ -33,8 +34,9 @@ type CreateRunInput struct {
 }
 
 type UpdateRunInput struct {
-	Status RunStatus
-	Error  string
+	Status   RunStatus
+	Error    string
+	AddUsage *runtime.TokenUsage
 }
 
 type RunStore interface {

@@ -100,6 +100,8 @@ The local store appends messages and events as JSON Lines. Metadata contains Run
 
 Messages include `created_at` timestamps. User messages may include inline image attachments as base64 data plus media type metadata. The local JSONL reader uses a streaming JSON decoder so large attachment lines can be read back during later Turns.
 
+Token usage is persisted per model call on `model_completed` events and cumulatively on Run metadata. Usage fields are provider-reported and optional; providers that do not return token accounting leave those fields absent.
+
 ## Configuration
 
 Use YAML for non-secret configuration and an environment variable for the model API key:
@@ -249,10 +251,10 @@ The Web Console is served by the Go service and has no separate Node build step.
 
 Implement a `SystemPromptBuilder` that separates static and dynamic sections:
 
-- Static: role, behavior rules, safety rules, output expectations.
-- Dynamic: working directory, current time, configured tools, project instructions if present.
+- Static: role, safety rules, behavior rules, tool-use policy, output policy.
+- Dynamic: runtime environment, configured tools, project instructions if present, Plan Mode context, and other per-Run/per-Turn state.
 
-The first version does not implement prompt-cache measurement. It preserves the section boundary so cache-aware ordering can be refined later without changing runtime flow.
+The builder emits a clear static/dynamic boundary so stable content remains at the front of the prompt for provider prompt-cache reuse. More stable dynamic sections are ordered before more volatile sections.
 
 ## Observability
 
@@ -266,6 +268,8 @@ Emit structured events for:
 - Turn failure.
 
 The non-streaming API returns the final Run/Turn result and can include relevant events. The streaming API sends these events as SSE while also persisting them to the Run Store.
+
+`model_completed` events include token usage when the provider returns it. The Run metadata stores cumulative totals for prompt, completion, total, cached, and reasoning tokens when available.
 
 ## Testing
 
@@ -284,6 +288,7 @@ Focused tests:
 - HTTP handlers persist and return message timestamps and image attachments.
 - ModelHub request mapping tests cover text, tool calls, and image attachments.
 - Plan Mode tests cover plan parsing, read-only tool restriction, plan APIs, and persisted completion progress.
+- Token usage tests cover provider parsing, Run metadata accumulation, and per-call event persistence.
 
 ## Delivery Files
 

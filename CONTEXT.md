@@ -40,6 +40,14 @@ _Avoid_: embedded database, production database
 The ordered sequence of runtime events emitted during a Run so clients can observe model output, tool calls, tool results, and termination.
 _Avoid_: log stream, callback trace
 
+**Token Usage**:
+Provider-reported token accounting for a model call, including prompt, completion, total, cached, and reasoning token counts when the provider returns them.
+_Avoid_: local token estimate, billing invoice
+
+**Prompt Cache**:
+A model provider optimization that reuses computation for an identical prompt prefix. The Agent Service preserves this by keeping stable System Prompt sections before dynamic context.
+_Avoid_: application cache, response cache
+
 **Plan Mode**:
 A Run-level mode where the Agent first performs read-only exploration and produces a persisted plan, then waits for explicit execution before using normal tool access to carry out the plan.
 _Avoid_: global service mode, transient UI toggle

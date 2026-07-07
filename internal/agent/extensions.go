@@ -21,13 +21,9 @@ func (m PlanModeMiddleware) Name() string {
 func (m PlanModeMiddleware) BeforeModel(ctx context.Context, req *model.Request, state *State) error {
 	switch state.Plan.Mode {
 	case runtime.PlanModePlanning:
-		req.SystemPrompt = req.SystemPrompt + "\n\n[PLAN MODE ACTIVE]\nYou are in plan mode. Explore with read-only tools only and produce a numbered plan under a \"Plan:\" header. Do not make changes."
 		req.Tools = planningTools(req.Tools)
 	case runtime.PlanModeExecuting:
-		if len(state.Plan.Steps) == 0 {
-			return nil
-		}
-		req.SystemPrompt = req.SystemPrompt + "\n\n[EXECUTING PLAN]\nExecute the persisted plan in order. After completing a step, include a [DONE:n] marker in your response.\n\nRemaining steps:\n" + remainingPlanSteps(state.Plan)
+		return nil
 	}
 	return nil
 }

@@ -26,6 +26,17 @@ func TestOpenAICompatibleProviderMapsTextResponse(t *testing.T) {
 			Choices: []openAIChoice{{
 				Message: openAIMessage{Role: "assistant", Content: "hello"},
 			}},
+			Usage: openAIUsage{
+				PromptTokens:     intPtr(16),
+				CompletionTokens: intPtr(5),
+				TotalTokens:      intPtr(21),
+				PromptTokensDetails: openAIPromptTokenDetails{
+					CachedTokens: intPtr(8),
+				},
+				CompletionTokensDetails: openAICompletionDetails{
+					ReasoningTokens: intPtr(2),
+				},
+			},
 		})
 	}))
 	defer server.Close()
@@ -68,6 +79,12 @@ func TestOpenAICompatibleProviderMapsTextResponse(t *testing.T) {
 	}
 	if len(captured.Tools) != 1 || captured.Tools[0].Function.Name != "read_file" {
 		t.Fatalf("tools = %#v", captured.Tools)
+	}
+	if resp.Usage == nil {
+		t.Fatal("expected usage")
+	}
+	if *resp.Usage.PromptTokens != 16 || *resp.Usage.CompletionTokens != 5 || *resp.Usage.TotalTokens != 21 || *resp.Usage.CachedTokens != 8 || *resp.Usage.ReasoningTokens != 2 {
+		t.Fatalf("usage = %#v", resp.Usage)
 	}
 }
 
@@ -166,4 +183,8 @@ func writeOpenAITestResponse(t *testing.T, w http.ResponseWriter, resp openAICha
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func intPtr(value int) *int {
+	return &value
 }
