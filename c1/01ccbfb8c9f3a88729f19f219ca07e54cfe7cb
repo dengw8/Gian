@@ -1,0 +1,103 @@
+internal/agent/safety.go
+  h_863ffb53529059 1-27
+internal/server/server.go
+  h_863ffb53529059 1-3,14-17,20-23,26-28,33-36,38,45-49,53-61,64-70,76-89,141-147,154-159,195-196,305-311,314-316,318-323,359
+  s_94c3d41f0ddb1b::t_e8d8a1d3e4ed50 4-13,18-19,24-25,29-32,37,39-44,50-52,62-63,71-75,90-140,148-153,160-194,197-304,312-313,317,324-358
+AGENTS.md
+  s_94c3d41f0ddb1b::t_21deb764c5ed88 1-15
+CONTEXT.md
+  s_94c3d41f0ddb1b::t_8f0b2ffbda6217 1-57
+Makefile
+  s_94c3d41f0ddb1b::t_c297a9909c320f 1-7
+cmd/agent-service/main.go
+  s_94c3d41f0ddb1b::t_8a276fb27955fe 1-74
+config.example.yaml
+  s_94c3d41f0ddb1b::t_56f32d0b5a8e34 1-13
+docs/adr/0001-openai-compatible-model-provider.md
+  s_94c3d41f0ddb1b::t_c287cdeeeb8ce8 1-3
+docs/adr/0002-run-store-port-with-local-files.md
+  s_94c3d41f0ddb1b::t_6910ac662dd8be 1-3
+docs/adr/0003-run-turn-http-api.md
+  s_94c3d41f0ddb1b::t_875e80a3d22d19 1-3
+docs/adr/0004-yaml-config-with-env-secret-override.md
+  s_94c3d41f0ddb1b::t_4a12da043dabb1 1-3
+docs/agents/domain.md
+  s_94c3d41f0ddb1b::t_13beab60473885 1-38
+docs/agents/issue-tracker.md
+  s_94c3d41f0ddb1b::t_9b4cb0efd08247 1-32
+docs/agents/triage-labels.md
+  s_94c3d41f0ddb1b::t_30766e6baff8e1 1-13
+docs/superpowers/prds/2026-07-06-agent-service-prd.md
+  s_94c3d41f0ddb1b::t_7c4865641c0fdd 1-121
+docs/superpowers/specs/2026-07-06-agent-service-design.md
+  s_94c3d41f0ddb1b::t_a5722cee6b605e 1-261
+go.mod
+  s_94c3d41f0ddb1b::t_fc820f87aa2842 1-5
+go.sum
+  s_94c3d41f0ddb1b::t_4b1a613295a5ff 1-4
+internal/agent/agent.go
+  s_94c3d41f0ddb1b::t_1bdc465d028f46 1-235
+internal/agent/agent_test.go
+  s_94c3d41f0ddb1b::t_abe191f23e9597 1-286
+internal/agent/extensions.go
+  s_94c3d41f0ddb1b::t_1930d213d8e758 1-25
+internal/agent/middleware.go
+  s_94c3d41f0ddb1b::t_25d856dce235ca 1-59
+internal/agent/prompt.go
+  s_94c3d41f0ddb1b::t_073f6c13c699ec 1-41
+internal/config/config.go
+  s_94c3d41f0ddb1b::t_9ff62bf7453d78 1-120
+internal/config/config_test.go
+  s_94c3d41f0ddb1b::t_4e91be133c9e89 1-70
+internal/model/model.go
+  s_94c3d41f0ddb1b::t_39721ff476b7d1 1-129
+internal/model/openai_compatible.go
+  s_94c3d41f0ddb1b::t_0e3fd80689c80f 1-212
+internal/model/openai_compatible_test.go
+  s_94c3d41f0ddb1b::t_9b81f434651833 1-169
+internal/runtime/types.go
+  s_94c3d41f0ddb1b::t_b258ccaca0fa48 1-58
+internal/server/server_test.go
+  s_94c3d41f0ddb1b::t_94c16eedbbf003 1-433
+internal/store/errors.go
+  s_94c3d41f0ddb1b::t_b89b2b3eb47751 1-5
+internal/store/local/store.go
+  s_94c3d41f0ddb1b::t_ea4fe8aeaba5a4 1-236
+internal/store/local/store_test.go
+  s_94c3d41f0ddb1b::t_751e4e4d1a69ef 1-102
+internal/store/store.go
+  s_94c3d41f0ddb1b::t_512c04a5e6f48c 1-45
+internal/tools/shell.go
+  s_94c3d41f0ddb1b::t_0807d0ca22fb96 1-124
+internal/tools/shell_test.go
+  s_94c3d41f0ddb1b::t_87d0d9ef5855b1 1-50
+internal/tools/tool.go
+  s_94c3d41f0ddb1b::t_c11f27a510b621 1-82
+internal/tools/workspace.go
+  s_94c3d41f0ddb1b::t_d3f0001bbb0e77 1-170
+internal/tools/workspace_test.go
+  s_94c3d41f0ddb1b::t_f3f346bfb151f1 1-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "c101ccbfb8c9f3a88729f19f219ca07e54cfe7cb",
+  "prompts": {},
+  "humans": {
+    "h_863ffb53529059": {
+      "author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "sessions": {
+    "s_94c3d41f0ddb1b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f375d-3481-7020-aebc-dd3378c4da09",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
