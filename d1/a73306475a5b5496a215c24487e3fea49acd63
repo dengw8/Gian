@@ -1,0 +1,64 @@
+config.example.yaml
+  h_863ffb53529059 7-8
+Makefile
+  s_94c3d41f0ddb1b::t_7581e0b7ac4226 4
+cmd/agent-service/main.go
+  s_94c3d41f0ddb1b::t_449584c317d619 71-77
+internal/agent/agent.go
+  s_94c3d41f0ddb1b::t_1d49570977856d 7,31-34,62,68-72,110,134,142-148
+internal/agent/agent_test.go
+  s_94c3d41f0ddb1b::t_2cf42c84ab9cb6 32,35,85,93,96,102-135,161,233,325-341
+internal/config/config.go
+  s_94c3d41f0ddb1b::t_ab460d040557f3 16,31-33,42-48,100-102,129-139
+internal/config/config_test.go
+  s_94c3d41f0ddb1b::t_9706cc56e4968f 71-122
+internal/model/model.go
+  s_94c3d41f0ddb1b::t_91b341fcda9b48 51,55,60-67,85,90-96
+internal/model/modelhub.go
+  s_94c3d41f0ddb1b::t_169c48968e8c70 1-248
+internal/model/modelhub_test.go
+  s_94c3d41f0ddb1b::t_8a8f831ff635ec 1-255
+internal/runtime/types.go
+  s_94c3d41f0ddb1b::t_4fee5b88ba6aa5 17-30
+internal/server/server.go
+  s_94c3d41f0ddb1b::t_b8bae2ba1111de 5,9,12,19-21,35-36,40-41,49-52,60-66,83-90,92,106-119,143,148,183-184,194,235-236,246,252,268-270,348-354
+internal/server/server_test.go
+  s_94c3d41f0ddb1b::t_4f6f18c0a2522a 15,56-60,71-90,122-225,309-313
+internal/server/web/app.js
+  s_94c3d41f0ddb1b::t_e12c10f6cdca9f 1-645
+internal/server/web/index.html
+  s_94c3d41f0ddb1b::t_3e5044d53a9eaf 1-107
+internal/server/web/styles.css
+  s_94c3d41f0ddb1b::t_63d6e899cfc0ec 1-642
+internal/store/local/store.go
+  s_94c3d41f0ddb1b::t_c824082e72406f 10,13,58-91,241-242,244-247
+internal/store/local/store_test.go
+  s_94c3d41f0ddb1b::t_b919e202c3db55 7,13,16-20,47-78
+internal/store/store.go
+  s_94c3d41f0ddb1b::t_0e20c66590293d 39
+internal/store/storetest/contract.go
+  s_94c3d41f0ddb1b::t_c7cee727223e9b 1-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "d1a73306475a5b5496a215c24487e3fea49acd63",
+  "prompts": {},
+  "humans": {
+    "h_863ffb53529059": {
+      "author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "sessions": {
+    "s_94c3d41f0ddb1b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f375d-3481-7020-aebc-dd3378c4da09",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
