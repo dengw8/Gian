@@ -11,14 +11,13 @@ Build a standalone Go Agent Service in this repository. The service must follow 
 - A Run is durable and supports multiple Turns.
 - Run state is persisted through a `RunStore` interface with a first local-file implementation.
 - The agent runtime has a real ReAct loop, six middleware lifecycle hooks, a shared State, a tool registry, and tool safety attributes.
-- The model boundary supports a deterministic fake provider and an OpenAI Chat Completions-compatible provider selected by configuration.
+- The model boundary supports deterministic fake, OpenAI Chat Completions-compatible, and ModelHub providers selected by configuration.
 - The first tool set includes `read_file`, `list_files`, and `shell`.
 - Tests can run without network access by using the fake model.
 
 ## Non-Goals
 
 - Do not modify `reference/pi` or `reference/deer-flow`.
-- Do not implement a frontend.
 - Do not add Docker packaging in the first version.
 - Do not implement database persistence in the first version.
 - Do not fully implement MCP, full Plan Mode approval flow, production context compaction, deep subagent recursion, Fornax trace integration, or shell AST security analysis. These must have clear runtime extension points where relevant.
@@ -61,7 +60,9 @@ The agent runtime must not depend on the local store implementation or the OpenA
 
 - `POST /v1/runs`
   - Creates a Run.
-  - If `message` is provided, immediately executes the first Turn.
+  - If `message` or `attachments` are provided, immediately executes the first Turn.
+- `GET /v1/runs`
+  - Returns persisted Run metadata, newest updated first.
 - `GET /v1/runs/{run_id}`
   - Returns Run metadata.
 - `GET /v1/runs/{run_id}/messages`
@@ -69,9 +70,9 @@ The agent runtime must not depend on the local store implementation or the OpenA
 - `GET /v1/runs/{run_id}/events`
   - Returns persisted events.
 - `POST /v1/runs/{run_id}/turns`
-  - Appends one user message and executes a non-streaming Turn.
+  - Appends one user message, optionally with inline image attachments, and executes a non-streaming Turn.
 - `POST /v1/runs/{run_id}/turns/stream`
-  - Appends one user message and streams this Turn's events as SSE.
+  - Appends one user message, optionally with inline image attachments, and streams this Turn's events as SSE.
 
 The business assumption is that the same Run will not receive concurrent Turn submissions. The implementation should still keep a lightweight `running` status check and return `409 Conflict` for obvious concurrent misuse.
 
@@ -88,6 +89,8 @@ data/runs/<run_id>/
 
 The local store appends messages and events as JSON Lines. Metadata contains Run status, timestamps, model configuration snapshot, and error information. The store boundary must be designed so a future database-backed implementation can replace local files without changing the agent runtime.
 
+Messages include `created_at` timestamps. User messages may include inline image attachments as base64 data plus media type metadata. The local JSONL reader uses a streaming JSON decoder so large attachment lines can be read back during later Turns.
+
 ## Configuration
 
 Use YAML for non-secret configuration and an environment variable for the model API key:
@@ -95,6 +98,7 @@ Use YAML for non-secret configuration and an environment variable for the model 
 - Default config path: `config.yaml`
 - Override config path: `AGENT_CONFIG`
 - API key override: `AGENT_MODEL_API_KEY`
+- ModelHub AK override: `AGENT_MODELHUB_AK`
 
 Expected settings:
 
@@ -108,9 +112,13 @@ model:
   openai:
     base_url: "https://api.openai.com/v1"
     model: "gpt-4.1-mini"
+  modelhub:
+    endpoint: "https://aidp.bytedance.net/api/modelhub/online/v2/crawl"
+    model: "gpt-5.4-2026-03-05"
+    max_tokens: 500
 ```
 
-If the configured provider is `fake`, the service uses the deterministic fake model. If the provider is `openai_compatible`, the service requires `base_url`, `model`, and an API key.
+If the configured provider is `fake`, the service uses the deterministic fake model. If the provider is `openai_compatible`, the service requires `base_url`, `model`, and an API key. If the provider is `modelhub`, the service requires `endpoint`, `model`, and an AK from either environment or ignored local config.
 
 ## Agent Runtime
 
@@ -207,8 +215,24 @@ Implementations:
 
 - `fake`: deterministic provider used by tests and local development.
 - `openai_compatible`: calls an OpenAI Chat Completions-compatible endpoint using `base_url`, `model`, and API key.
+- `modelhub`: calls the ByteDance ModelHub crawl endpoint using `endpoint`, `model`, `max_tokens`, and AK.
 
 The OpenAI-compatible implementation maps internal messages and tools to Chat Completions request fields and maps assistant text/tool calls back to internal response types.
+
+The ModelHub implementation maps text and image attachments to content parts. Image attachments are sent as `image_url` data URLs. `X-TT-LOGID` is generated per request unless a test injects one.
+
+## Web Console
+
+The service embeds a static Web Console under `/app/`. It supports:
+
+- Creating empty Runs.
+- Loading persisted Run history from `GET /v1/runs`.
+- Loading Run metadata, messages, and events.
+- Sending non-streaming and SSE Turns.
+- Optimistically displaying user messages while requests are in flight.
+- Attaching, previewing, sending, and rendering inline images.
+
+The Web Console is served by the Go service and has no separate Node build step.
 
 ## System Prompt
 
@@ -242,8 +266,12 @@ Focused tests:
 - Fake model requests a tool; runtime executes it and appends tool result.
 - Multi-turn Run loads prior messages before continuing.
 - Local store writes metadata, messages, and events.
+- Local store reads large message JSONL entries created by image attachments.
+- Store implementations can run the shared Run Store contract test suite.
 - Dangerous shell commands are rejected.
 - HTTP handlers create Runs, append Turns, and stream SSE events.
+- HTTP handlers persist and return message timestamps and image attachments.
+- ModelHub request mapping tests cover text, tool calls, and image attachments.
 
 ## Delivery Files
 
@@ -253,9 +281,10 @@ First version should include:
 - `cmd/agent-service/main.go`
 - `internal/...` packages described above
 - `config.example.yaml`
+- embedded `internal/server/web` assets
 - `Makefile` with `make test` and `make run`
 - `README.md` with local startup and API examples
 
 ## Open Decisions
 
-No open design decisions remain for the first implementation pass. Future work includes database Run Store, richer Plan Mode, context compaction, subagent delegation, MCP support, full command AST analysis, and trace backend integration.
+No open design decisions remain for the current implementation pass. Future work includes database Run Store, richer Plan Mode, context compaction, subagent delegation, MCP support, full command AST analysis, trace backend integration, and Docker packaging.

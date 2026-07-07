@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Service Console</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <h1>History</h1>
+          <button id="newRunButton" class="success-button" type="button">+ New</button>
+        </div>
+
+        <div class="sidebar-controls">
+          <label class="sr-only" for="runIdInput">Run ID</label>
+          <input id="runIdInput" type="text" placeholder="run_id, e.g. run_abc123" />
+          <button id="loadRunButton" class="primary-button" type="button">Load Run</button>
+        </div>
+
+        <div class="history-section">
+          <div class="history-group">
+            <button class="group-toggle" type="button" aria-expanded="true">
+              <span>Run History</span>
+              <span id="historyCount">0</span>
+            </button>
+            <div id="historyList" class="history-list"></div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="run-bar">
+          <div>
+            <span class="muted-label">run_id:</span>
+            <strong id="currentRunId">No run selected</strong>
+          </div>
+          <button id="copyRunButton" class="icon-button" type="button" title="Copy run id">Copy</button>
+        </header>
+
+        <section class="status-strip" aria-label="Service and run status">
+          <div>
+            <span class="muted-label">Health</span>
+            <strong id="healthStatus">Unknown</strong>
+          </div>
+          <div>
+            <span class="muted-label">Run Status</span>
+            <strong id="runStatus">-</strong>
+          </div>
+          <div>
+            <span class="muted-label">Provider</span>
+            <strong id="modelProvider">-</strong>
+          </div>
+          <div>
+            <span class="muted-label">Updated</span>
+            <strong id="updatedAt">-</strong>
+          </div>
+        </section>
+
+        <section class="content-grid">
+          <div class="timeline-panel">
+            <div class="panel-toolbar">
+              <h2>Messages</h2>
+              <div class="button-row">
+                <button id="refreshRunButton" type="button">Metadata</button>
+                <button id="refreshMessagesButton" type="button">Messages</button>
+              </div>
+            </div>
+            <div id="messageTimeline" class="timeline empty-state">
+              Select or create a run to inspect messages.
+            </div>
+          </div>
+
+          <div class="events-panel">
+            <div class="panel-toolbar">
+              <h2>Events</h2>
+              <button id="refreshEventsButton" type="button">Refresh</button>
+            </div>
+            <div id="eventStream" class="event-stream empty-state">
+              Persisted and streamed events appear here.
+            </div>
+          </div>
+        </section>
+
+        <footer class="composer">
+          <div id="attachmentPreview" class="attachment-preview" aria-label="Selected images"></div>
+          <div class="composer-row">
+            <label class="field grow">
+              <span>Message</span>
+              <input id="messageInput" type="text" placeholder="Type a message..." />
+            </label>
+            <button id="imageButton" class="image-button" type="button" title="Attach images">Image</button>
+            <input id="imageInput" class="sr-only" type="file" accept="image/*" multiple />
+            <button id="sendButton" class="primary-button" type="button">Send</button>
+            <button id="streamButton" class="primary-button secondary" type="button">Stream</button>
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>

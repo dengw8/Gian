@@ -27,6 +27,10 @@ model:
   openai:
     base_url: "https://api.openai.com/v1"
     model: "gpt-4.1-mini"
+  modelhub:
+    endpoint: "https://aidp.bytedance.net/api/modelhub/online/v2/crawl"
+    model: "gpt-5.4-2026-03-05"
+    max_tokens: 500
 agent:
   max_iterations: 4
 storage:
@@ -48,6 +52,12 @@ make run
 ```
 
 This starts the service on `server.addr`.
+
+Open the embedded web console:
+
+```text
+http://localhost:8080/app/
+```
 
 ## Test
 
@@ -96,12 +106,55 @@ AGENT_MODEL_API_KEY=... make run
 
 The API key is intentionally not read from `config.yaml`.
 
+### ModelHub Provider
+
+Use `modelhub` for the ByteDance ModelHub crawl endpoint:
+
+```yaml
+model:
+  provider: "modelhub"
+  modelhub:
+    endpoint: "https://aidp.bytedance.net/api/modelhub/online/v2/crawl"
+    model: "gpt-5.4-2026-03-05"
+    max_tokens: 500
+```
+
+Provide the AK through the environment:
+
+```bash
+AGENT_MODELHUB_AK=... make run
+```
+
+Or put `ak` in a local `config.yaml` that is ignored by git. `X-TT-LOGID` is generated automatically when it is not configured.
+
 ## API
 
 All examples assume:
 
 ```bash
 BASE=http://localhost:8080
+```
+
+### List Runs
+
+Fetch durable Run metadata, newest updated first:
+
+```bash
+curl -sS "$BASE/v1/runs"
+```
+
+Response:
+
+```json
+{
+  "runs": [
+    {
+      "id": "run_...",
+      "status": "completed",
+      "model_provider": "fake"
+    }
+  ]
+}
 ```
 
 ### Create a Run
@@ -120,6 +173,24 @@ Create a Run and execute the first Turn:
 curl -sS "$BASE/v1/runs" \
   -H 'content-type: application/json' \
   -d '{"message":"hello"}'
+```
+
+Create a Run with an inline image attachment:
+
+```bash
+curl -sS "$BASE/v1/runs" \
+  -H 'content-type: application/json' \
+  -d '{
+    "message": "describe this image",
+    "attachments": [
+      {
+        "type": "image",
+        "media_type": "image/png",
+        "data": "...base64 image data...",
+        "name": "image.png"
+      }
+    ]
+  }'
 ```
 
 Response includes Run metadata and messages:
@@ -253,18 +324,23 @@ Implemented:
 
 - Standalone Go service
 - Durable Runs
+- Run history API
 - Multi-Turn execution
 - Local Store
+- Run Store contract tests
 - HTTP JSON API
 - SSE Turn Event Stream
 - Fake Model
 - OpenAI-Compatible Provider
+- ModelHub Provider
 - Workspace Tools
 - Shell Tool with conservative safety policy
+- Message timestamps
+- Inline image attachments
+- Embedded Web Console
 
 Out of scope for this version:
 
-- Frontend UI
 - Docker packaging
 - Database-backed Run Store
 - MCP integration

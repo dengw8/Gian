@@ -2,16 +2,22 @@ package server
 
 import (
 	"bufio"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dengw8/harness-practice/internal/agent"
 	"github.com/dengw8/harness-practice/internal/runtime"
 	"github.com/dengw8/harness-practice/internal/store"
 )
+
+//go:embed web/*
+var appAssets embed.FS
 
 type Config struct {
 	Runner        *agent.Runner
@@ -26,16 +32,22 @@ type Server struct {
 }
 
 type createRunRequest struct {
-	Message string `json:"message"`
+	Message     string               `json:"message"`
+	Attachments []runtime.Attachment `json:"attachments,omitempty"`
 }
 
 type appendTurnRequest struct {
-	Message string `json:"message"`
+	Message     string               `json:"message"`
+	Attachments []runtime.Attachment `json:"attachments,omitempty"`
 }
 
 type createRunResponse struct {
 	Run      store.RunMetadata `json:"run"`
 	Messages []messageOutput   `json:"messages"`
+}
+
+type listRunsResponse struct {
+	Runs []store.RunMetadata `json:"runs"`
 }
 
 type appendTurnResponse struct {
@@ -45,11 +57,13 @@ type appendTurnResponse struct {
 }
 
 type messageOutput struct {
-	Role       string             `json:"role"`
-	Content    string             `json:"content,omitempty"`
-	ToolCallID string             `json:"tool_call_id,omitempty"`
-	Name       string             `json:"name,omitempty"`
-	ToolCalls  []runtime.ToolCall `json:"tool_calls,omitempty"`
+	Role        string               `json:"role"`
+	Content     string               `json:"content,omitempty"`
+	ToolCallID  string               `json:"tool_call_id,omitempty"`
+	Name        string               `json:"name,omitempty"`
+	ToolCalls   []runtime.ToolCall   `json:"tool_calls,omitempty"`
+	Attachments []runtime.Attachment `json:"attachments,omitempty"`
+	CreatedAt   time.Time            `json:"created_at,omitempty"`
 }
 
 type errorResponse struct {
@@ -66,7 +80,16 @@ func New(cfg Config) *Server {
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
+	appFS, err := fs.Sub(appAssets, "web")
+	if err != nil {
+		panic(err)
+	}
+	mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
+	})
+	mux.Handle("GET /app/", http.StripPrefix("/app/", http.FileServer(http.FS(appFS))))
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /v1/runs", s.handleListRuns)
 	mux.HandleFunc("POST /v1/runs", s.handleCreateRun)
 	mux.HandleFunc("GET /v1/runs/{runID}", s.handleGetRun)
 	mux.HandleFunc("GET /v1/runs/{runID}/messages", s.handleListMessages)
@@ -78,6 +101,20 @@ func (s *Server) Routes() http.Handler {
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "run store is not configured"})
+		return
+	}
+
+	runs, err := s.store.ListRuns(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, listRunsResponse{Runs: runs})
 }
 
 func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
@@ -103,12 +140,12 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	message := strings.TrimSpace(req.Message)
-	if message == "" {
+	if message == "" && len(req.Attachments) == 0 {
 		writeJSON(w, http.StatusCreated, createRunResponse{Run: meta})
 		return
 	}
 
-	out, meta, err := s.executeTurn(r, meta, message, nil, nil)
+	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, nil, nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
@@ -143,8 +180,8 @@ func (s *Server) handleAppendTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	message := strings.TrimSpace(req.Message)
-	if message == "" {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "message is required"})
+	if message == "" && len(req.Attachments) == 0 {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "message or attachment is required"})
 		return
 	}
 
@@ -154,7 +191,7 @@ func (s *Server) handleAppendTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, meta, err := s.executeTurn(r, meta, message, history, nil)
+	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, history, nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
@@ -195,8 +232,8 @@ func (s *Server) handleAppendTurnStream(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	message := strings.TrimSpace(req.Message)
-	if message == "" {
-		stream.write(runtime.NewEvent("turn_failed", "message is required"))
+	if message == "" && len(req.Attachments) == 0 {
+		stream.write(runtime.NewEvent("turn_failed", "message or attachment is required"))
 		return
 	}
 
@@ -206,13 +243,13 @@ func (s *Server) handleAppendTurnStream(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_, _, err = s.executeTurn(r, meta, message, history, stream.write)
+	_, _, err = s.executeTurn(r, meta, message, req.Attachments, history, stream.write)
 	if err != nil {
 		return
 	}
 }
 
-func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message string, history []runtime.Message, sink agent.EventSink) (agent.TurnOutput, store.RunMetadata, error) {
+func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message string, attachments []runtime.Attachment, history []runtime.Message, sink agent.EventSink) (agent.TurnOutput, store.RunMetadata, error) {
 	if s.runner == nil {
 		return agent.TurnOutput{}, meta, errors.New("agent runner is not configured")
 	}
@@ -228,8 +265,9 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 	}
 
 	out, err := s.runner.RunTurn(r.Context(), agent.TurnInput{
-		History: history,
-		Message: message,
+		History:     history,
+		Message:     message,
+		Attachments: attachments,
 		Events: func(event runtime.Event) error {
 			return s.emitAndPersist(r, meta.ID, event, sink)
 		},
@@ -307,11 +345,13 @@ func toMessageOutput(messages []runtime.Message) []messageOutput {
 	output := make([]messageOutput, 0, len(messages))
 	for _, msg := range messages {
 		output = append(output, messageOutput{
-			Role:       string(msg.Role),
-			Content:    msg.Content,
-			ToolCallID: msg.ToolCallID,
-			Name:       msg.Name,
-			ToolCalls:  msg.ToolCalls,
+			Role:        string(msg.Role),
+			Content:     msg.Content,
+			ToolCallID:  msg.ToolCallID,
+			Name:        msg.Name,
+			ToolCalls:   msg.ToolCalls,
+			Attachments: msg.Attachments,
+			CreatedAt:   msg.CreatedAt,
 		})
 	}
 	return output

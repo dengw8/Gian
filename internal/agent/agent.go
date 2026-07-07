@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/dengw8/harness-practice/internal/model"
 	"github.com/dengw8/harness-practice/internal/runtime"
@@ -27,9 +28,10 @@ type Runner struct {
 }
 
 type TurnInput struct {
-	Message string
-	History []runtime.Message
-	Events  EventSink
+	Message     string
+	Attachments []runtime.Attachment
+	History     []runtime.Message
+	Events      EventSink
 }
 
 type TurnOutput struct {
@@ -57,13 +59,17 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 	if r.model == nil {
 		return TurnOutput{}, errors.New("agent runner requires a model provider")
 	}
-	if input.Message == "" {
+	if input.Message == "" && len(input.Attachments) == 0 {
 		return TurnOutput{}, errors.New("message is required")
 	}
 
 	history := append([]runtime.Message(nil), input.History...)
 	state := &State{
-		Messages: append(history, runtime.Message{Role: runtime.RoleUser, Content: input.Message}),
+		Messages: append(history, timestampMessage(runtime.Message{
+			Role:        runtime.RoleUser,
+			Content:     input.Message,
+			Attachments: append([]runtime.Attachment(nil), input.Attachments...),
+		})),
 		Metadata: map[string]any{},
 	}
 	newMessageStart := len(history)
@@ -101,7 +107,7 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 			return TurnOutput{}, err
 		}
 
-		state.Messages = append(state.Messages, resp.Message)
+		state.Messages = append(state.Messages, timestampMessage(resp.Message))
 		if len(resp.Message.ToolCalls) == 0 {
 			return TurnOutput{
 				Messages:    append([]runtime.Message(nil), state.Messages...),
@@ -125,11 +131,19 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 				ToolCallID: result.ToolCallID,
 				Name:       result.Name,
 				Content:    content,
+				CreatedAt:  time.Now().UTC(),
 			})
 		}
 	}
 
 	return TurnOutput{}, errors.New("agent turn exceeded max iterations")
+}
+
+func timestampMessage(message runtime.Message) runtime.Message {
+	if message.CreatedAt.IsZero() {
+		message.CreatedAt = time.Now().UTC()
+	}
+	return message
 }
 
 func emit(sink EventSink, event runtime.Event) error {

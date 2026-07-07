@@ -119,3 +119,27 @@ The first release uses a Fake Model for deterministic development and tests. It 
 - The PRD follows the repository glossary in `CONTEXT.md`.
 - The PRD respects the ADRs for OpenAI-compatible model integration, Run Store abstraction with Local Store first, Run and Turn HTTP API shape, and YAML configuration with environment-based secret override.
 - The implementation should be split into independently grabbable issues before coding because the feature spans runtime architecture, persistence, HTTP API, model integration, Tools, safety, and documentation.
+
+## Implementation Updates
+
+The implementation later grew beyond the original first-release scope in a few practical ways:
+
+- Added an embedded Web Console served from `/app/`.
+- Added `GET /v1/runs` so the Web Console can load persisted Run history.
+- Added per-message `created_at` timestamps.
+- Added inline image attachments on user messages, persisted in `messages.jsonl`.
+- Added ModelHub Provider support for the ByteDance ModelHub crawl endpoint.
+- Added ModelHub image mapping using `image_url` data URLs.
+- Added a reusable Run Store contract test suite for current and future store implementations.
+- Added local `config.yaml` support for ModelHub AK, with `config.yaml` ignored by git.
+
+The following items remain future work from the broader architecture:
+
+- Database-backed Run Store.
+- Full Plan Mode approval workflow.
+- Production context compaction.
+- Subagent delegation beyond no-op extension middleware.
+- MCP integration.
+- Fornax or other trace backend integration.
+- Full shell AST security analysis.
+- Docker packaging.

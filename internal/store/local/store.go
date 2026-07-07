@@ -1,15 +1,16 @@
 package local
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -52,6 +53,40 @@ func (s *Store) CreateRun(ctx context.Context, input store.CreateRunInput) (stor
 		return store.RunMetadata{}, err
 	}
 	return meta, nil
+}
+
+func (s *Store) ListRuns(ctx context.Context) ([]store.RunMetadata, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	entries, err := os.ReadDir(filepath.Join(s.root, runsDir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []store.RunMetadata{}, nil
+		}
+		return nil, err
+	}
+
+	runs := make([]store.RunMetadata, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		meta, err := s.GetRun(ctx, entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, meta)
+	}
+
+	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].UpdatedAt.Equal(runs[j].UpdatedAt) {
+			return runs[i].ID > runs[j].ID
+		}
+		return runs[i].UpdatedAt.After(runs[j].UpdatedAt)
+	})
+	return runs, nil
 }
 
 func (s *Store) GetRun(ctx context.Context, runID string) (store.RunMetadata, error) {
@@ -203,18 +238,17 @@ func readJSONLines[T any](path string) ([]T, error) {
 	defer file.Close()
 
 	var values []T
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
+	decoder := json.NewDecoder(file)
+	for {
 		var value T
-		if err := json.Unmarshal(scanner.Bytes(), &value); err != nil {
+		if err := decoder.Decode(&value); err != nil {
+			if errors.Is(err, io.EOF) {
+				return values, nil
+			}
 			return nil, err
 		}
 		values = append(values, value)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return values, nil
 }
 
 func newRunID() (string, error) {

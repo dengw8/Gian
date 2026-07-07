@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dengw8/harness-practice/internal/agent"
 	"github.com/dengw8/harness-practice/internal/model"
@@ -52,6 +53,11 @@ func TestCreateRunCompletesNoToolTurn(t *testing.T) {
 	if resp.Messages[1].Content != "fake response: hello" {
 		t.Fatalf("assistant content = %q", resp.Messages[1].Content)
 	}
+	for i, msg := range resp.Messages {
+		if msg.CreatedAt.IsZero() {
+			t.Fatalf("response message %d has zero created_at: %#v", i, msg)
+		}
+	}
 
 	persistedMessages, err := runStore.ListMessages(req.Context(), resp.Run.ID)
 	if err != nil {
@@ -59,6 +65,26 @@ func TestCreateRunCompletesNoToolTurn(t *testing.T) {
 	}
 	if len(persistedMessages) != 2 {
 		t.Fatalf("persisted message count = %d, want 2", len(persistedMessages))
+	}
+}
+
+func TestServesEmbeddedConsoleApp(t *testing.T) {
+	srv := New(Config{
+		Runner:        agent.NewRunner(agent.Config{Model: model.NewFakeProvider()}),
+		Store:         local.New(t.TempDir()),
+		ModelProvider: "fake",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/app/", nil)
+	rec := httptest.NewRecorder()
+
+	srv.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Agent Service Console") {
+		t.Fatalf("console HTML missing expected title: %s", rec.Body.String())
 	}
 }
 
@@ -90,6 +116,110 @@ func TestCreateRunWithoutMessagePersistsMetadata(t *testing.T) {
 	}
 	if len(resp.Messages) != 0 {
 		t.Fatalf("message count = %d, want 0", len(resp.Messages))
+	}
+}
+
+func TestCreateRunPersistsUserAttachments(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	srv := New(Config{
+		Runner:        agent.NewRunner(agent.Config{Model: model.NewFakeProvider()}),
+		Store:         runStore,
+		ModelProvider: "fake",
+	})
+
+	body := `{"message":"describe","attachments":[{"type":"image","media_type":"image/png","data":"aW1hZ2U=","name":"image.png"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp createRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Messages) != 2 {
+		t.Fatalf("message count = %d, want 2", len(resp.Messages))
+	}
+	if len(resp.Messages[0].Attachments) != 1 {
+		t.Fatalf("response attachments = %#v", resp.Messages[0].Attachments)
+	}
+
+	persistedMessages, err := runStore.ListMessages(req.Context(), resp.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persistedMessages) != 2 || len(persistedMessages[0].Attachments) != 1 {
+		t.Fatalf("persisted messages = %#v", persistedMessages)
+	}
+	if persistedMessages[0].Attachments[0].MediaType != "image/png" {
+		t.Fatalf("attachment = %#v", persistedMessages[0].Attachments[0])
+	}
+}
+
+func TestAppendTurnAfterLargeImageHistory(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	srv := New(Config{
+		Runner:        agent.NewRunner(agent.Config{Model: model.NewFakeProvider()}),
+		Store:         runStore,
+		ModelProvider: "fake",
+	})
+
+	body := `{"message":"describe","attachments":[{"type":"image","media_type":"image/png","data":"` + strings.Repeat("a", 128*1024) + `","name":"large.png"}]}`
+	created := createRunForTest(t, srv, body)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+created.Run.ID+"/turns", bytes.NewBufferString(`{"message":"second turn"}`))
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp appendTurnResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Messages) != 4 {
+		t.Fatalf("message count = %d, want 4", len(resp.Messages))
+	}
+}
+
+func TestListRunsReturnsStoredRunsNewestUpdatedFirst(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	srv := New(Config{
+		Runner:        agent.NewRunner(agent.Config{Model: model.NewFakeProvider()}),
+		Store:         runStore,
+		ModelProvider: "fake",
+	})
+
+	first := createRunForTest(t, srv, `{}`)
+	time.Sleep(time.Millisecond)
+	second := createRunForTest(t, srv, `{}`)
+	time.Sleep(time.Millisecond)
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+first.Run.ID+"/turns", bytes.NewBufferString(`{"message":"hello"}`))
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("append status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/runs", nil)
+	rec = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp listRunsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Runs) != 2 {
+		t.Fatalf("run count = %d, want 2", len(resp.Runs))
+	}
+	if resp.Runs[0].ID != first.Run.ID || resp.Runs[1].ID != second.Run.ID {
+		t.Fatalf("runs = %#v, want updated run first", resp.Runs)
 	}
 }
 
@@ -175,6 +305,11 @@ func TestAppendTurnLoadsHistoryAndPersistsOnlyNewMessages(t *testing.T) {
 	}
 	if len(resp.NewMessages) != 2 {
 		t.Fatalf("new message count = %d, want 2", len(resp.NewMessages))
+	}
+	for i, msg := range resp.NewMessages {
+		if msg.CreatedAt.IsZero() {
+			t.Fatalf("new response message %d has zero created_at: %#v", i, msg)
+		}
 	}
 	if resp.NewMessages[0].Content != "second" || resp.NewMessages[1].Content != "fake response: second" {
 		t.Fatalf("new messages = %#v", resp.NewMessages)

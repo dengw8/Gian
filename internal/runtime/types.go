@@ -14,11 +14,20 @@ const (
 )
 
 type Message struct {
-	Role       MessageRole `json:"role"`
-	Content    string      `json:"content,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
-	Name       string      `json:"name,omitempty"`
-	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	Role        MessageRole  `json:"role"`
+	Content     string       `json:"content,omitempty"`
+	ToolCallID  string       `json:"tool_call_id,omitempty"`
+	Name        string       `json:"name,omitempty"`
+	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	CreatedAt   time.Time    `json:"created_at,omitempty"`
+}
+
+type Attachment struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+	Name      string `json:"name,omitempty"`
 }
 
 type Event struct {

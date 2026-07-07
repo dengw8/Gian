@@ -2,72 +2,22 @@ package local
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dengw8/harness-practice/internal/runtime"
 	"github.com/dengw8/harness-practice/internal/store"
+	"github.com/dengw8/harness-practice/internal/store/storetest"
 )
 
-func TestStorePersistsRunMessagesAndEvents(t *testing.T) {
-	ctx := context.Background()
-	localStore := New(t.TempDir())
-
-	meta, err := localStore.CreateRun(ctx, store.CreateRunInput{ModelProvider: "fake"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	messages := []runtime.Message{
-		{Role: runtime.RoleUser, Content: "hello"},
-		{Role: runtime.RoleAssistant, Content: "fake response: hello"},
-	}
-	if err := localStore.AppendMessages(ctx, meta.ID, messages); err != nil {
-		t.Fatal(err)
-	}
-
-	events := []runtime.Event{
-		{Type: "run_created", CreatedAt: time.Now().UTC(), Message: "Run created"},
-		{Type: "turn_completed", CreatedAt: time.Now().UTC(), Message: "Turn completed"},
-	}
-	if err := localStore.AppendEvents(ctx, meta.ID, events); err != nil {
-		t.Fatal(err)
-	}
-
-	updated, err := localStore.UpdateRun(ctx, meta.ID, store.UpdateRunInput{Status: store.RunStatusCompleted})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if updated.Status != store.RunStatusCompleted {
-		t.Fatalf("status = %q, want %q", updated.Status, store.RunStatusCompleted)
-	}
-
-	gotMeta, err := localStore.GetRun(ctx, meta.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotMeta.ID != meta.ID {
-		t.Fatalf("id = %q, want %q", gotMeta.ID, meta.ID)
-	}
-
-	gotMessages, err := localStore.ListMessages(ctx, meta.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(gotMessages) != len(messages) {
-		t.Fatalf("message count = %d, want %d", len(gotMessages), len(messages))
-	}
-
-	gotEvents, err := localStore.ListEvents(ctx, meta.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(gotEvents) != len(events) {
-		t.Fatalf("event count = %d, want %d", len(gotEvents), len(events))
-	}
+func TestRunStoreContract(t *testing.T) {
+	storetest.RunStoreContract(t, func(t *testing.T) store.RunStore {
+		t.Helper()
+		return New(t.TempDir())
+	})
 }
 
 func TestStoreUsesInspectableRunLayout(t *testing.T) {
@@ -94,9 +44,37 @@ func TestStoreUsesInspectableRunLayout(t *testing.T) {
 	}
 }
 
-func TestStoreReturnsNotFoundForMissingRun(t *testing.T) {
-	_, err := New(t.TempDir()).GetRun(context.Background(), "run_missing")
-	if !errors.Is(err, store.ErrRunNotFound) {
-		t.Fatalf("err = %v, want ErrRunNotFound", err)
+func TestStoreReadsLargeMessageLines(t *testing.T) {
+	ctx := context.Background()
+	localStore := New(t.TempDir())
+
+	meta, err := localStore.CreateRun(ctx, store.CreateRunInput{ModelProvider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	largeData := strings.Repeat("a", 128*1024)
+	message := runtime.Message{
+		Role:    runtime.RoleUser,
+		Content: "large image",
+		Attachments: []runtime.Attachment{{
+			Type:      "image",
+			MediaType: "image/png",
+			Data:      largeData,
+			Name:      "large.png",
+		}},
+	}
+	if err := localStore.AppendMessages(ctx, meta.ID, []runtime.Message{message}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := localStore.ListMessages(ctx, meta.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("message count = %d, want 1", len(got))
+	}
+	if got[0].Attachments[0].Data != largeData {
+		t.Fatalf("large attachment was not preserved")
 	}
 }

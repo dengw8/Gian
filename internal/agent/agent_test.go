@@ -29,9 +29,10 @@ func TestRunnerCompletesNoToolTurnWithFakeModel(t *testing.T) {
 		{Role: runtime.RoleUser, Content: "hello"},
 		{Role: runtime.RoleAssistant, Content: "fake response: hello"},
 	}
-	if !reflect.DeepEqual(out.Messages, want) {
+	if !reflect.DeepEqual(clearMessageTimes(out.Messages), want) {
 		t.Fatalf("messages = %#v, want %#v", out.Messages, want)
 	}
+	assertMessagesHaveTimes(t, out.NewMessages)
 }
 
 func TestRunnerCallsMiddlewareLifecycleForNoToolTurn(t *testing.T) {
@@ -81,7 +82,7 @@ func TestRunnerLoadsHistoryBeforeNewTurn(t *testing.T) {
 		{Role: runtime.RoleAssistant, Content: "first response"},
 		{Role: runtime.RoleUser, Content: "second"},
 	}
-	if !reflect.DeepEqual(recorder.requests[0].Messages, wantRequestMessages) {
+	if !reflect.DeepEqual(clearMessageTimes(recorder.requests[0].Messages), wantRequestMessages) {
 		t.Fatalf("request messages = %#v, want %#v", recorder.requests[0].Messages, wantRequestMessages)
 	}
 
@@ -89,11 +90,46 @@ func TestRunnerLoadsHistoryBeforeNewTurn(t *testing.T) {
 		{Role: runtime.RoleUser, Content: "second"},
 		{Role: runtime.RoleAssistant, Content: "second response"},
 	}
-	if !reflect.DeepEqual(out.NewMessages, wantNewMessages) {
+	if !reflect.DeepEqual(clearMessageTimes(out.NewMessages), wantNewMessages) {
 		t.Fatalf("new messages = %#v, want %#v", out.NewMessages, wantNewMessages)
 	}
+	assertMessagesHaveTimes(t, out.NewMessages)
 	if len(out.Messages) != 4 {
 		t.Fatalf("all message count = %d, want 4", len(out.Messages))
+	}
+}
+
+func TestRunnerPreservesUserAttachments(t *testing.T) {
+	recorder := &requestRecordingProvider{
+		response: runtime.Message{Role: runtime.RoleAssistant, Content: "saw image"},
+	}
+	runner := NewRunner(Config{
+		Model:         recorder,
+		MaxIterations: 2,
+	})
+
+	attachments := []runtime.Attachment{{
+		Type:      "image",
+		MediaType: "image/png",
+		Data:      "aW1hZ2U=",
+		Name:      "image.png",
+	}}
+	out, err := runner.RunTurn(context.Background(), TurnInput{
+		Message:     "describe",
+		Attachments: attachments,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(recorder.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(recorder.requests))
+	}
+	if !reflect.DeepEqual(recorder.requests[0].Messages[0].Attachments, attachments) {
+		t.Fatalf("request attachments = %#v, want %#v", recorder.requests[0].Messages[0].Attachments, attachments)
+	}
+	if !reflect.DeepEqual(out.NewMessages[0].Attachments, attachments) {
+		t.Fatalf("new message attachments = %#v, want %#v", out.NewMessages[0].Attachments, attachments)
 	}
 }
 
@@ -122,6 +158,7 @@ func TestRunnerExecutesWorkspaceToolAndFeedsResultBack(t *testing.T) {
 	if len(out.NewMessages) != 4 {
 		t.Fatalf("new message count = %d, want 4: %#v", len(out.NewMessages), out.NewMessages)
 	}
+	assertMessagesHaveTimes(t, out.NewMessages)
 	if len(out.NewMessages[1].ToolCalls) != 1 {
 		t.Fatalf("assistant tool calls = %#v", out.NewMessages[1].ToolCalls)
 	}
@@ -193,6 +230,7 @@ func TestSafetyMiddlewareRejectsShellBeforeExecution(t *testing.T) {
 	if len(out.NewMessages) != 4 {
 		t.Fatalf("new message count = %d, want 4", len(out.NewMessages))
 	}
+	assertMessagesHaveTimes(t, out.NewMessages)
 	toolMessage := out.NewMessages[2]
 	if toolMessage.Role != runtime.RoleTool {
 		t.Fatalf("tool message role = %q", toolMessage.Role)
@@ -283,4 +321,21 @@ func (m *recordingMiddleware) BeforeTool(ctx context.Context, call runtime.ToolC
 func (m *recordingMiddleware) AfterTool(ctx context.Context, result runtime.ToolResult, state *State) error {
 	m.toolCalls = append(m.toolCalls, "after_tool:"+result.Name)
 	return nil
+}
+
+func clearMessageTimes(messages []runtime.Message) []runtime.Message {
+	cleared := append([]runtime.Message(nil), messages...)
+	for i := range cleared {
+		cleared[i].CreatedAt = runtime.Message{}.CreatedAt
+	}
+	return cleared
+}
+
+func assertMessagesHaveTimes(t *testing.T, messages []runtime.Message) {
+	t.Helper()
+	for i, message := range messages {
+		if message.CreatedAt.IsZero() {
+			t.Fatalf("message %d has zero created_at: %#v", i, message)
+		}
+	}
 }

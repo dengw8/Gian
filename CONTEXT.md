@@ -20,6 +20,14 @@ _Avoid_: job, one-shot task, transient request
 One user message appended to a Run plus the agent work that follows from that message.
 _Avoid_: request, step, iteration
 
+**Message**:
+A persisted user, assistant, or tool message in a Run. Messages can include text content, tool calls, tool results, timestamps, and attachments.
+_Avoid_: chat bubble, raw payload
+
+**Attachment**:
+Inline binary user input attached to a Message. The current implementation supports image attachments persisted as base64 data with media type metadata.
+_Avoid_: uploaded file, external asset
+
 **Run Store**:
 The persistence boundary for saving and loading Run state and Event Stream data without coupling the agent runtime to a concrete storage technology.
 _Avoid_: database layer, file logger
@@ -43,6 +51,14 @@ _Avoid_: mock server, dummy LLM
 **OpenAI-Compatible Provider**:
 A real Model Provider that speaks the OpenAI Chat Completions-compatible request and response protocol.
 _Avoid_: multi-provider adapter, Responses API provider
+
+**ModelHub Provider**:
+A real Model Provider for the ByteDance ModelHub crawl endpoint. It maps text and image attachments into ModelHub content parts and sends a generated request log id.
+_Avoid_: OpenAI-compatible provider, generic HTTP client
+
+**Web Console**:
+The embedded browser UI served from `/app/` for creating Runs, loading Run history, sending Turns, attaching images, and inspecting messages and events.
+_Avoid_: marketing site, separate frontend service
 
 **Tool**:
 A capability exposed to the agent runtime with a name, input schema, safety attributes, and an execution function.

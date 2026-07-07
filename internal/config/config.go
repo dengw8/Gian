@@ -13,6 +13,7 @@ const defaultAddr = ":8080"
 const defaultProvider = "fake"
 const defaultMaxIterations = 4
 const APIKeyEnv = "AGENT_MODEL_API_KEY"
+const ModelHubAKEnv = "AGENT_MODELHUB_AK"
 
 type Config struct {
 	Server  ServerConfig  `yaml:"server"`
@@ -27,14 +28,22 @@ type ServerConfig struct {
 }
 
 type ModelConfig struct {
-	Provider string       `yaml:"provider"`
-	OpenAI   OpenAIConfig `yaml:"openai"`
+	Provider string         `yaml:"provider"`
+	OpenAI   OpenAIConfig   `yaml:"openai"`
+	ModelHub ModelHubConfig `yaml:"modelhub"`
 }
 
 type OpenAIConfig struct {
 	BaseURL string `yaml:"base_url"`
 	Model   string `yaml:"model"`
 	APIKey  string `yaml:"-"`
+}
+
+type ModelHubConfig struct {
+	Endpoint  string `yaml:"endpoint"`
+	Model     string `yaml:"model"`
+	MaxTokens int    `yaml:"max_tokens"`
+	AK        string `yaml:"ak"`
 }
 
 type AgentConfig struct {
@@ -88,6 +97,9 @@ func (c *Config) applyDefaults() {
 	}
 	c.Model.Provider = strings.TrimSpace(c.Model.Provider)
 	c.Model.OpenAI.APIKey = os.Getenv(APIKeyEnv)
+	if ak := os.Getenv(ModelHubAKEnv); ak != "" {
+		c.Model.ModelHub.AK = ak
+	}
 	if c.Agent.MaxIterations <= 0 {
 		c.Agent.MaxIterations = defaultMaxIterations
 	}
@@ -112,6 +124,17 @@ func (c Config) Validate() error {
 		}
 		if strings.TrimSpace(c.Model.OpenAI.APIKey) == "" {
 			return fmt.Errorf("%s is required for openai_compatible provider", APIKeyEnv)
+		}
+		return nil
+	case "modelhub":
+		if strings.TrimSpace(c.Model.ModelHub.Endpoint) == "" {
+			return fmt.Errorf("model.modelhub.endpoint is required for modelhub provider")
+		}
+		if strings.TrimSpace(c.Model.ModelHub.Model) == "" {
+			return fmt.Errorf("model.modelhub.model is required for modelhub provider")
+		}
+		if strings.TrimSpace(c.Model.ModelHub.AK) == "" {
+			return fmt.Errorf("%s is required for modelhub provider", ModelHubAKEnv)
 		}
 		return nil
 	default:

@@ -68,3 +68,55 @@ func TestValidateOpenAICompatibleRequiresAPIKey(t *testing.T) {
 		t.Fatalf("err = %v, want missing api key error", err)
 	}
 }
+
+func TestLoadFileReadsModelHubAKFromEnv(t *testing.T) {
+	t.Setenv(ModelHubAKEnv, "test-ak")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("model:\n  provider: modelhub\n  modelhub:\n    endpoint: http://example.test/crawl\n    model: test-model\n    max_tokens: 500\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model.ModelHub.AK != "test-ak" {
+		t.Fatalf("ak = %q, want test-ak", cfg.Model.ModelHub.AK)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadFileReadsModelHubAKFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("model:\n  provider: modelhub\n  modelhub:\n    endpoint: http://example.test/crawl\n    model: test-model\n    max_tokens: 500\n    ak: file-ak\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model.ModelHub.AK != "file-ak" {
+		t.Fatalf("ak = %q, want file-ak", cfg.Model.ModelHub.AK)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateModelHubRequiresAK(t *testing.T) {
+	t.Setenv(ModelHubAKEnv, "")
+	cfg := Default()
+	cfg.Model.Provider = "modelhub"
+	cfg.Model.ModelHub.Endpoint = "http://example.test/crawl"
+	cfg.Model.ModelHub.Model = "test-model"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), ModelHubAKEnv) {
+		t.Fatalf("err = %v, want missing ak error", err)
+	}
+}

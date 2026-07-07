@@ -48,13 +48,23 @@ func (p *FakeProvider) Generate(ctx context.Context, req Request) (Response, err
 	}
 
 	last := ""
+	lastAttachmentCount := 0
 	for i := len(req.Messages) - 1; i >= 0; i-- {
 		if req.Messages[i].Role == runtime.RoleUser {
 			last = req.Messages[i].Content
+			lastAttachmentCount = len(req.Messages[i].Attachments)
 			break
 		}
 	}
 	if last == "" {
+		if lastAttachmentCount > 0 {
+			return Response{
+				Message: runtime.Message{
+					Role:    runtime.RoleAssistant,
+					Content: fmt.Sprintf("fake response: received %d image(s)", lastAttachmentCount),
+				},
+			}, nil
+		}
 		last = "empty request"
 	}
 	if call, ok, err := fakeToolCall(last, req.Tools); ok || err != nil {
@@ -72,9 +82,16 @@ func (p *FakeProvider) Generate(ctx context.Context, req Request) (Response, err
 	return Response{
 		Message: runtime.Message{
 			Role:    runtime.RoleAssistant,
-			Content: fmt.Sprintf("fake response: %s", last),
+			Content: fakeTextResponse(last, lastAttachmentCount),
 		},
 	}, nil
+}
+
+func fakeTextResponse(text string, attachmentCount int) string {
+	if attachmentCount == 0 {
+		return fmt.Sprintf("fake response: %s", text)
+	}
+	return fmt.Sprintf("fake response: %s (received %d image(s))", text, attachmentCount)
 }
 
 func lastToolMessage(messages []runtime.Message) (runtime.Message, bool) {

@@ -68,6 +68,13 @@ func buildModelProvider(cfg config.Config) (model.Provider, error) {
 			Model:   cfg.Model.OpenAI.Model,
 			APIKey:  cfg.Model.OpenAI.APIKey,
 		})
+	case "modelhub":
+		return model.NewModelHubProvider(model.ModelHubConfig{
+			Endpoint:  cfg.Model.ModelHub.Endpoint,
+			Model:     cfg.Model.ModelHub.Model,
+			MaxTokens: cfg.Model.ModelHub.MaxTokens,
+			AK:        cfg.Model.ModelHub.AK,
+		})
 	default:
 		return nil, cfg.Validate()
 	}

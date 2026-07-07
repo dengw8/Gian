@@ -36,6 +36,7 @@ type UpdateRunInput struct {
 
 type RunStore interface {
 	CreateRun(ctx context.Context, input CreateRunInput) (RunMetadata, error)
+	ListRuns(ctx context.Context) ([]RunMetadata, error)
 	GetRun(ctx context.Context, runID string) (RunMetadata, error)
 	UpdateRun(ctx context.Context, runID string, input UpdateRunInput) (RunMetadata, error)
 	AppendMessages(ctx context.Context, runID string, messages []runtime.Message) error
