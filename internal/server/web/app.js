@@ -8,6 +8,7 @@ const state = {
   modelLogs: [],
   plan: { mode: "off", steps: [] },
   attachments: [],
+  activeInspector: "planPanel",
   busy: false,
 };
 
@@ -21,6 +22,8 @@ const el = {
   historyList: document.querySelector("#historyList"),
   imageButton: document.querySelector("#imageButton"),
   imageInput: document.querySelector("#imageInput"),
+  inspectorTabs: Array.from(document.querySelectorAll(".inspector-tab")),
+  inspectorViews: Array.from(document.querySelectorAll(".inspector-view")),
   loadRunButton: document.querySelector("#loadRunButton"),
   messageInput: document.querySelector("#messageInput"),
   messageTimeline: document.querySelector("#messageTimeline"),
@@ -48,6 +51,7 @@ const el = {
 function init() {
   renderHistory();
   bindEvents();
+  selectInspector(state.activeInspector);
   checkHealth();
   loadRunHistory();
 }
@@ -67,6 +71,10 @@ function bindEvents() {
   el.resetPlanButton.addEventListener("click", resetPlan);
   el.sendButton.addEventListener("click", () => submitTurn(false));
   el.streamButton.addEventListener("click", () => submitTurn(true));
+  el.inspectorTabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => selectInspector(tab.dataset.inspectorTarget));
+    tab.addEventListener("keydown", (event) => handleInspectorTabKeydown(event, index));
+  });
 
   el.messageInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -75,6 +83,47 @@ function bindEvents() {
     }
   });
 
+}
+
+function handleInspectorTabKeydown(event, index) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+    return;
+  }
+  event.preventDefault();
+  let nextIndex = index;
+  if (event.key === "ArrowLeft") {
+    nextIndex = (index - 1 + el.inspectorTabs.length) % el.inspectorTabs.length;
+  }
+  if (event.key === "ArrowRight") {
+    nextIndex = (index + 1) % el.inspectorTabs.length;
+  }
+  if (event.key === "Home") {
+    nextIndex = 0;
+  }
+  if (event.key === "End") {
+    nextIndex = el.inspectorTabs.length - 1;
+  }
+  const nextTab = el.inspectorTabs[nextIndex];
+  nextTab.focus();
+  selectInspector(nextTab.dataset.inspectorTarget);
+}
+
+function selectInspector(targetId) {
+  if (!targetId) {
+    return;
+  }
+  state.activeInspector = targetId;
+  el.inspectorTabs.forEach((tab) => {
+    const active = tab.dataset.inspectorTarget === targetId;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  el.inspectorViews.forEach((view) => {
+    const active = view.id === targetId;
+    view.classList.toggle("active", active);
+    view.hidden = !active;
+  });
 }
 
 function apiURL(path) {

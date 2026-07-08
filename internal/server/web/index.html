@@ -11,8 +11,14 @@
     <div class="app-shell">
       <aside class="sidebar">
         <div class="sidebar-header">
-          <h1>History</h1>
-          <button id="newRunButton" class="success-button" type="button">+ New</button>
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true">AS</span>
+            <div>
+              <span class="eyebrow">Agent Service</span>
+              <h1>Agent Service Console</h1>
+            </div>
+          </div>
+          <button id="newRunButton" class="success-button" type="button">New Run</button>
         </div>
 
         <div class="sidebar-controls">
@@ -33,39 +39,43 @@
       </aside>
 
       <main class="workspace">
-        <header class="run-bar">
-          <div>
-            <span class="muted-label">run_id:</span>
-            <strong id="currentRunId">No run selected</strong>
-          </div>
-          <button id="copyRunButton" class="icon-button" type="button" title="Copy run id">Copy</button>
-        </header>
+        <section class="command-center">
+          <header class="run-bar">
+            <div class="run-identity">
+              <span class="eyebrow">Debug cockpit</span>
+              <h2>Run workspace</h2>
+              <span class="muted-label">run_id:</span>
+              <strong id="currentRunId">No run selected</strong>
+            </div>
+            <button id="copyRunButton" class="icon-button" type="button" title="Copy run id">Copy</button>
+          </header>
 
-        <section class="status-strip" aria-label="Service and run status">
-          <div>
-            <span class="muted-label">Health</span>
-            <strong id="healthStatus">Unknown</strong>
-          </div>
-          <div>
-            <span class="muted-label">Run Status</span>
-            <strong id="runStatus">-</strong>
-          </div>
-          <div>
-            <span class="muted-label">Provider</span>
-            <strong id="modelProvider">-</strong>
-          </div>
-          <div>
-            <span class="muted-label">Token Usage</span>
-            <strong id="tokenUsage">-</strong>
-          </div>
-          <div>
-            <span class="muted-label">Plan</span>
-            <strong id="planStatus">off</strong>
-          </div>
-          <div>
-            <span class="muted-label">Updated</span>
-            <strong id="updatedAt">-</strong>
-          </div>
+          <section class="status-strip" aria-label="Service and run status">
+            <div class="status-card health-card">
+              <span class="muted-label">Health</span>
+              <strong id="healthStatus">Unknown</strong>
+            </div>
+            <div class="status-card">
+              <span class="muted-label">Run Status</span>
+              <strong id="runStatus">-</strong>
+            </div>
+            <div class="status-card">
+              <span class="muted-label">Provider</span>
+              <strong id="modelProvider">-</strong>
+            </div>
+            <div class="status-card">
+              <span class="muted-label">Token Usage</span>
+              <strong id="tokenUsage">-</strong>
+            </div>
+            <div class="status-card">
+              <span class="muted-label">Plan</span>
+              <strong id="planStatus">off</strong>
+            </div>
+            <div class="status-card">
+              <span class="muted-label">Updated</span>
+              <strong id="updatedAt">-</strong>
+            </div>
+          </section>
         </section>
 
         <section class="content-grid">
@@ -82,40 +92,81 @@
             </div>
           </div>
 
-          <div class="side-stack">
-            <div class="plan-panel">
-              <div class="panel-toolbar">
-                <h2>Plan</h2>
-                <div class="button-row">
-                  <button id="executePlanButton" type="button">Execute</button>
-                  <button id="resetPlanButton" type="button">Reset</button>
+          <aside class="inspector-panel" aria-label="Run inspector">
+            <div class="inspector-header">
+              <div>
+                <span class="eyebrow">Inspector</span>
+                <h2>Runtime trace</h2>
+              </div>
+              <div class="inspector-tabs" role="tablist" aria-label="Inspector views">
+                <button
+                  class="inspector-tab active"
+                  type="button"
+                  role="tab"
+                  aria-selected="true"
+                  aria-controls="planPanel"
+                  data-inspector-target="planPanel"
+                >
+                  Plan
+                </button>
+                <button
+                  class="inspector-tab"
+                  type="button"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="modelLogsPanel"
+                  data-inspector-target="modelLogsPanel"
+                >
+                  Model I/O
+                </button>
+                <button
+                  class="inspector-tab"
+                  type="button"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="eventsPanel"
+                  data-inspector-target="eventsPanel"
+                >
+                  Events
+                </button>
+              </div>
+            </div>
+
+            <div class="side-stack">
+              <div id="planPanel" class="plan-panel inspector-view active" role="tabpanel">
+                <div class="panel-toolbar">
+                  <h2>Plan</h2>
+                  <div class="button-row">
+                    <button id="executePlanButton" type="button">Execute</button>
+                    <button id="resetPlanButton" type="button">Reset</button>
+                  </div>
+                </div>
+                <div id="planView" class="plan-view empty-state">
+                  Enable Plan Mode to create a plan.
                 </div>
               </div>
-              <div id="planView" class="plan-view empty-state">
-                Enable Plan Mode to create a plan.
-              </div>
-            </div>
 
-            <div class="model-logs-panel">
-              <div class="panel-toolbar">
-                <h2>Model I/O</h2>
-                <button id="refreshModelLogsButton" type="button">Refresh</button>
+              <div id="modelLogsPanel" class="model-logs-panel inspector-view" role="tabpanel" hidden>
+                <div class="panel-toolbar">
+                  <h2>Model I/O</h2>
+                  <button id="refreshModelLogsButton" type="button">Refresh</button>
+                </div>
+                <div id="modelLogsView" class="model-logs empty-state">
+                  Model requests and responses appear here.
+                </div>
               </div>
-              <div id="modelLogsView" class="model-logs empty-state">
-                Model requests and responses appear here.
-              </div>
-            </div>
 
-            <div class="events-panel">
-              <div class="panel-toolbar">
-                <h2>Events</h2>
-                <button id="refreshEventsButton" type="button">Refresh</button>
-              </div>
-              <div id="eventStream" class="event-stream empty-state">
-                Persisted and streamed events appear here.
+              <div id="eventsPanel" class="events-panel inspector-view" role="tabpanel" hidden>
+                <div class="panel-toolbar">
+                  <h2>Events</h2>
+                  <button id="refreshEventsButton" type="button">Refresh</button>
+                </div>
+                <div id="eventStream" class="event-stream empty-state">
+                  Persisted and streamed events appear here.
+                </div>
               </div>
             </div>
-          </div>
+          </aside>
         </section>
 
         <footer class="composer">
