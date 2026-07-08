@@ -148,6 +148,27 @@ func RunStoreContract(t *testing.T, newStore Factory) {
 		if !reflect.DeepEqual(gotEvents, events) {
 			t.Fatalf("events = %#v, want %#v", gotEvents, events)
 		}
+
+		logs := []runtime.ModelLog{{
+			Index:       1,
+			StartedAt:   messageTime,
+			CompletedAt: messageTime.Add(time.Millisecond),
+			Request: runtime.ModelRequestLog{
+				SystemPrompt: "system",
+				Messages:     messages[:1],
+			},
+			Response: runtime.ModelResponseLog{Message: messages[1]},
+		}}
+		if err := runStore.AppendModelLogs(context.Background(), meta.ID, logs); err != nil {
+			t.Fatal(err)
+		}
+		gotLogs, err := runStore.ListModelLogs(context.Background(), meta.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(gotLogs, logs) {
+			t.Fatalf("model logs = %#v, want %#v", gotLogs, logs)
+		}
 	})
 
 	t.Run("plan state", func(t *testing.T) {

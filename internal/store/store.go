@@ -50,4 +50,6 @@ type RunStore interface {
 	ListMessages(ctx context.Context, runID string) ([]runtime.Message, error)
 	AppendEvents(ctx context.Context, runID string, events []runtime.Event) error
 	ListEvents(ctx context.Context, runID string) ([]runtime.Event, error)
+	AppendModelLogs(ctx context.Context, runID string, logs []runtime.ModelLog) error
+	ListModelLogs(ctx context.Context, runID string) ([]runtime.ModelLog, error)
 }

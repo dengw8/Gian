@@ -33,6 +33,15 @@ func TestRunnerCompletesNoToolTurnWithFakeModel(t *testing.T) {
 		t.Fatalf("messages = %#v, want %#v", out.Messages, want)
 	}
 	assertMessagesHaveTimes(t, out.NewMessages)
+	if len(out.ModelLogs) != 1 {
+		t.Fatalf("model log count = %d, want 1", len(out.ModelLogs))
+	}
+	if out.ModelLogs[0].Request.Messages[0].Content != "hello" || out.ModelLogs[0].Response.Message.Content != "fake response: hello" {
+		t.Fatalf("model log = %#v", out.ModelLogs[0])
+	}
+	if out.ModelLogs[0].StartedAt.IsZero() || out.ModelLogs[0].CompletedAt.IsZero() {
+		t.Fatalf("model log timestamps not set: %#v", out.ModelLogs[0])
+	}
 }
 
 func TestSystemPromptUsesStaticDynamicBoundary(t *testing.T) {

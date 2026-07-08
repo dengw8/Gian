@@ -44,6 +44,10 @@ _Avoid_: log stream, callback trace
 Provider-reported token accounting for a model call, including prompt, completion, total, cached, and reasoning token counts when the provider returns them.
 _Avoid_: local token estimate, billing invoice
 
+**Model I/O Log**:
+A persisted record of one model call containing the final model request, response or error, timestamps, and provider-reported usage. It is used to reproduce and debug model behavior without logging credentials.
+_Avoid_: credential log, billing log
+
 **Prompt Cache**:
 A model provider optimization that reuses computation for an identical prompt prefix. The Agent Service preserves this by keeping stable System Prompt sections before dynamic context.
 _Avoid_: application cache, response cache

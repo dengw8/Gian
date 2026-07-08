@@ -5,6 +5,7 @@ const state = {
   currentRunId: "",
   runs: [],
   events: [],
+  modelLogs: [],
   plan: { mode: "off", steps: [] },
   attachments: [],
   busy: false,
@@ -23,6 +24,7 @@ const el = {
   loadRunButton: document.querySelector("#loadRunButton"),
   messageInput: document.querySelector("#messageInput"),
   messageTimeline: document.querySelector("#messageTimeline"),
+  modelLogsView: document.querySelector("#modelLogsView"),
   modelProvider: document.querySelector("#modelProvider"),
   newRunButton: document.querySelector("#newRunButton"),
   executePlanButton: document.querySelector("#executePlanButton"),
@@ -30,6 +32,7 @@ const el = {
   planStatus: document.querySelector("#planStatus"),
   planView: document.querySelector("#planView"),
   refreshEventsButton: document.querySelector("#refreshEventsButton"),
+  refreshModelLogsButton: document.querySelector("#refreshModelLogsButton"),
   refreshMessagesButton: document.querySelector("#refreshMessagesButton"),
   refreshRunButton: document.querySelector("#refreshRunButton"),
   resetPlanButton: document.querySelector("#resetPlanButton"),
@@ -56,6 +59,7 @@ function bindEvents() {
   el.refreshRunButton.addEventListener("click", refreshRunMetadata);
   el.refreshMessagesButton.addEventListener("click", refreshMessages);
   el.refreshEventsButton.addEventListener("click", refreshEvents);
+  el.refreshModelLogsButton.addEventListener("click", refreshModelLogs);
   el.imageButton.addEventListener("click", () => el.imageInput.click());
   el.imageInput.addEventListener("change", handleImageSelection);
   el.planModeToggle.addEventListener("change", () => setPlanMode(el.planModeToggle.checked));
@@ -111,7 +115,9 @@ async function createEmptyRun() {
     });
     selectRun(data.run);
     selectPlan(data.plan);
+    state.modelLogs = [];
     renderMessages(data.messages || []);
+    renderModelLogs();
     await Promise.all([refreshEvents(), loadRunHistory()]);
     toast("Run created");
   });
@@ -132,7 +138,7 @@ async function loadRun(runId) {
       method: "GET",
     });
     selectRun(run);
-    await Promise.all([refreshMessages(), refreshEvents(), refreshPlan(), loadRunHistory()]);
+    await Promise.all([refreshMessages(), refreshEvents(), refreshModelLogs(), refreshPlan(), loadRunHistory()]);
   });
 }
 
@@ -184,6 +190,18 @@ async function refreshEvents() {
   });
   state.events = events || [];
   renderEvents();
+}
+
+async function refreshModelLogs() {
+  if (!state.currentRunId) {
+    toast("No run selected");
+    return;
+  }
+  const logs = await requestJSON(`/v1/runs/${encodeURIComponent(state.currentRunId)}/model-logs`, {
+    method: "GET",
+  });
+  state.modelLogs = logs || [];
+  renderModelLogs();
 }
 
 async function refreshPlan() {
@@ -270,7 +288,7 @@ async function submitTurn(streaming) {
         selectRun(data.run);
         selectPlan(data.plan);
         renderMessages(data.messages || []);
-        await Promise.all([refreshEvents(), loadRunHistory()]);
+        await Promise.all([refreshEvents(), refreshModelLogs(), loadRunHistory()]);
         toast("Run created and turn completed");
         return;
       }
@@ -288,7 +306,7 @@ async function submitTurn(streaming) {
         selectRun(data.run);
         selectPlan(data.plan);
         renderMessages(data.messages || []);
-        await Promise.all([refreshEvents(), loadRunHistory()]);
+        await Promise.all([refreshEvents(), refreshModelLogs(), loadRunHistory()]);
       }
     } catch (error) {
       markOptimisticMessage(optimistic, "failed");
@@ -331,7 +349,7 @@ async function streamTurn(message, attachments) {
     }
   }
 
-  await Promise.all([refreshRunMetadata(), refreshMessages(), refreshEvents(), refreshPlan(), loadRunHistory()]);
+  await Promise.all([refreshRunMetadata(), refreshMessages(), refreshEvents(), refreshModelLogs(), refreshPlan(), loadRunHistory()]);
 }
 
 function consumeSSEBuffer(buffer) {
@@ -653,6 +671,60 @@ function renderEvents() {
   el.eventStream.scrollTop = el.eventStream.scrollHeight;
 }
 
+function renderModelLogs() {
+  el.modelLogsView.classList.remove("empty-state");
+  el.modelLogsView.textContent = "";
+  if (!state.modelLogs.length) {
+    el.modelLogsView.classList.add("empty-state");
+    el.modelLogsView.textContent = "No model I/O logs yet.";
+    return;
+  }
+
+  state.modelLogs.forEach((log) => {
+    const card = document.createElement("article");
+    card.className = "model-log-card";
+
+    const header = document.createElement("div");
+    header.className = "model-log-header";
+    const title = document.createElement("strong");
+    title.textContent = `Call ${log.index || "?"}`;
+    const time = document.createElement("time");
+    time.textContent = formatDate(log.started_at);
+    header.append(title, time);
+    card.append(header);
+
+    if (log.response?.usage) {
+      card.append(renderUsageDetails(log.response.usage));
+    }
+    if (log.error) {
+      const error = document.createElement("div");
+      error.className = "model-log-error";
+      error.textContent = log.error;
+      card.append(error);
+    }
+
+    card.append(renderModelLogBlock("Request", log.request));
+    if (log.response && (log.response.message || log.response.usage)) {
+      card.append(renderModelLogBlock("Response", log.response));
+    }
+    el.modelLogsView.append(card);
+  });
+  el.modelLogsView.scrollTop = el.modelLogsView.scrollHeight;
+}
+
+function renderModelLogBlock(labelText, value) {
+  const block = document.createElement("div");
+  block.className = "model-log-block";
+  const label = document.createElement("span");
+  label.className = "muted-label";
+  label.textContent = labelText;
+  const code = document.createElement("pre");
+  code.className = "code-block";
+  code.textContent = formatJSON(value);
+  block.append(label, code);
+  return block;
+}
+
 function renderUsageDetails(usage) {
   const grid = document.createElement("div");
   grid.className = "usage-grid";
@@ -857,6 +929,7 @@ function setBusy(value) {
     el.refreshRunButton,
     el.refreshMessagesButton,
     el.refreshEventsButton,
+    el.refreshModelLogsButton,
     el.executePlanButton,
     el.resetPlanButton,
     el.sendButton,

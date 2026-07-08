@@ -279,6 +279,7 @@ button:focus-visible {
 
 .timeline-panel,
 .events-panel,
+.model-logs-panel,
 .plan-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -292,7 +293,7 @@ button:focus-visible {
 
 .side-stack {
   display: grid;
-  grid-template-rows: minmax(180px, 0.44fr) minmax(0, 1fr);
+  grid-template-rows: minmax(150px, 0.3fr) minmax(180px, 0.4fr) minmax(0, 1fr);
   gap: 16px;
   min-width: 0;
   min-height: 0;
@@ -322,6 +323,7 @@ button:focus-visible {
 
 .timeline,
 .event-stream,
+.model-logs,
 .plan-view {
   min-height: 0;
   overflow: auto;
@@ -521,6 +523,43 @@ button:focus-visible {
 .event-card {
   padding: 12px;
   background: #fbfdff;
+}
+
+.model-log-card {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.model-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.model-log-header time {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.model-log-block {
+  margin-top: 10px;
+}
+
+.model-log-error {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid #f0b1b1;
+  border-radius: 8px;
+  color: #a12222;
+  background: #fff7f7;
+  font-weight: 800;
 }
 
 .event-type {

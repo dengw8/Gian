@@ -69,6 +69,8 @@ The agent runtime must not depend on the local store implementation or the OpenA
   - Returns persisted messages.
 - `GET /v1/runs/{run_id}/events`
   - Returns persisted events.
+- `GET /v1/runs/{run_id}/model-logs`
+  - Returns persisted model input/output logs.
 - `POST /v1/runs/{run_id}/turns`
   - Appends one user message, optionally with inline image attachments, and executes a non-streaming Turn.
 - `POST /v1/runs/{run_id}/turns/stream`
@@ -94,13 +96,16 @@ data/runs/<run_id>/
   plan.json
   messages.jsonl
   events.jsonl
+  model_logs.jsonl
 ```
 
-The local store appends messages and events as JSON Lines. Metadata contains Run status, timestamps, model configuration snapshot, and error information. The store boundary must be designed so a future database-backed implementation can replace local files without changing the agent runtime.
+The local store appends messages, events, and model input/output logs as JSON Lines. Metadata contains Run status, timestamps, model configuration snapshot, and error information. The store boundary must be designed so a future database-backed implementation can replace local files without changing the agent runtime.
 
 Messages include `created_at` timestamps. User messages may include inline image attachments as base64 data plus media type metadata. The local JSONL reader uses a streaming JSON decoder so large attachment lines can be read back during later Turns.
 
 Token usage is persisted per model call on `model_completed` events and cumulatively on Run metadata. Usage fields are provider-reported and optional; providers that do not return token accounting leave those fields absent.
+
+Model I/O logs are persisted per model call in `model_logs.jsonl`. Each log captures the final model request after prompt/tool/message assembly and the model response or error. Provider credentials are not part of the runtime request and are not logged.
 
 ## Configuration
 
@@ -240,6 +245,7 @@ The service embeds a static Web Console under `/app/`. It supports:
 - Creating empty Runs.
 - Loading persisted Run history from `GET /v1/runs`.
 - Loading Run metadata, messages, and events.
+- Loading model input/output logs for reproducible debugging.
 - Sending non-streaming and SSE Turns.
 - Optimistically displaying user messages while requests are in flight.
 - Attaching, previewing, sending, and rendering inline images.
@@ -271,6 +277,8 @@ The non-streaming API returns the final Run/Turn result and can include relevant
 
 `model_completed` events include token usage when the provider returns it. The Run metadata stores cumulative totals for prompt, completion, total, cached, and reasoning tokens when available.
 
+The runtime also returns per-call Model I/O logs to the server. The server persists them through the Run Store so operators can inspect the exact request and response that produced a message without relying only on the event stream.
+
 ## Testing
 
 Run `go test ./...`.
@@ -281,6 +289,7 @@ Focused tests:
 - Fake model requests a tool; runtime executes it and appends tool result.
 - Multi-turn Run loads prior messages before continuing.
 - Local store writes metadata, messages, and events.
+- Local store writes model input/output logs.
 - Local store reads large message JSONL entries created by image attachments.
 - Store implementations can run the shared Run Store contract test suite.
 - Dangerous shell commands are rejected.
@@ -289,6 +298,7 @@ Focused tests:
 - ModelHub request mapping tests cover text, tool calls, and image attachments.
 - Plan Mode tests cover plan parsing, read-only tool restriction, plan APIs, and persisted completion progress.
 - Token usage tests cover provider parsing, Run metadata accumulation, and per-call event persistence.
+- Model I/O log tests cover runtime capture, local persistence, and HTTP retrieval.
 
 ## Delivery Files
 

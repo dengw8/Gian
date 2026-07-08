@@ -266,6 +266,32 @@ func (s *Store) ListEvents(ctx context.Context, runID string) ([]runtime.Event, 
 	return readJSONLines[runtime.Event](s.eventsPath(runID))
 }
 
+func (s *Store) AppendModelLogs(ctx context.Context, runID string, logs []runtime.ModelLog) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateRunID(runID); err != nil {
+		return err
+	}
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return err
+	}
+	return appendJSONLines(s.modelLogsPath(runID), logs)
+}
+
+func (s *Store) ListModelLogs(ctx context.Context, runID string) ([]runtime.ModelLog, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateRunID(runID); err != nil {
+		return nil, err
+	}
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return nil, err
+	}
+	return readJSONLines[runtime.ModelLog](s.modelLogsPath(runID))
+}
+
 func (s *Store) runDir(runID string) string {
 	return filepath.Join(s.root, runsDir, runID)
 }
@@ -280,6 +306,10 @@ func (s *Store) messagesPath(runID string) string {
 
 func (s *Store) eventsPath(runID string) string {
 	return filepath.Join(s.runDir(runID), "events.jsonl")
+}
+
+func (s *Store) modelLogsPath(runID string) string {
+	return filepath.Join(s.runDir(runID), "model_logs.jsonl")
 }
 
 func (s *Store) planPath(runID string) string {

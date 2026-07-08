@@ -102,6 +102,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/runs/{runID}", s.handleGetRun)
 	mux.HandleFunc("GET /v1/runs/{runID}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /v1/runs/{runID}/events", s.handleListEvents)
+	mux.HandleFunc("GET /v1/runs/{runID}/model-logs", s.handleListModelLogs)
 	mux.HandleFunc("GET /v1/runs/{runID}/plan", s.handleGetPlan)
 	mux.HandleFunc("POST /v1/runs/{runID}/plan-mode", s.handleSetPlanMode)
 	mux.HandleFunc("POST /v1/runs/{runID}/plan/execute", s.handleExecutePlan)
@@ -312,6 +313,9 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 		},
 	})
 	if err != nil {
+		if len(out.ModelLogs) > 0 {
+			_ = s.appendModelLogs(r, meta.ID, out.ModelLogs)
+		}
 		updated, updateErr := s.store.UpdateRun(r.Context(), meta.ID, store.UpdateRunInput{
 			Status: store.RunStatusFailed,
 			Error:  err.Error(),
@@ -324,6 +328,9 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 	}
 
 	if err := s.store.AppendMessages(r.Context(), meta.ID, out.NewMessages); err != nil {
+		return agent.TurnOutput{}, meta, err
+	}
+	if err := s.appendModelLogs(r, meta.ID, out.ModelLogs); err != nil {
 		return agent.TurnOutput{}, meta, err
 	}
 	if usage := totalUsage(out.Events); usage != nil {
@@ -344,6 +351,20 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 		return agent.TurnOutput{}, meta, err
 	}
 	return out, meta, nil
+}
+
+func (s *Server) appendModelLogs(r *http.Request, runID string, logs []runtime.ModelLog) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	existing, err := s.store.ListModelLogs(r.Context(), runID)
+	if err != nil {
+		return err
+	}
+	for i := range logs {
+		logs[i].Index = len(existing) + i + 1
+	}
+	return s.store.AppendModelLogs(r.Context(), runID, logs)
 }
 
 func totalUsage(events []runtime.Event) *runtime.TokenUsage {
@@ -418,6 +439,15 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) handleListModelLogs(w http.ResponseWriter, r *http.Request) {
+	logs, err := s.store.ListModelLogs(r.Context(), r.PathValue("runID"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, logs)
 }
 
 func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {

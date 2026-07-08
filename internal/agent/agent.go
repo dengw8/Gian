@@ -36,10 +36,11 @@ type TurnInput struct {
 }
 
 type TurnOutput struct {
-	Messages    []runtime.Message `json:"messages"`
-	NewMessages []runtime.Message `json:"new_messages"`
-	Plan        runtime.PlanState `json:"plan"`
-	Events      []runtime.Event   `json:"events,omitempty"`
+	Messages    []runtime.Message  `json:"messages"`
+	NewMessages []runtime.Message  `json:"new_messages"`
+	Plan        runtime.PlanState  `json:"plan"`
+	Events      []runtime.Event    `json:"events,omitempty"`
+	ModelLogs   []runtime.ModelLog `json:"model_logs,omitempty"`
 }
 
 type EventSink func(event runtime.Event) error
@@ -78,6 +79,7 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 	}
 	newMessageStart := len(history)
 	events := []runtime.Event{}
+	modelLogs := []runtime.ModelLog{}
 	eventSink := func(event runtime.Event) error {
 		events = append(events, event)
 		return emit(input.Events, event)
@@ -109,10 +111,26 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 		if err := eventSink(runtime.NewEvent("model_started", "Model started")); err != nil {
 			return TurnOutput{}, err
 		}
+		modelLog := newModelLog(len(modelLogs)+1, req)
 		resp, err := r.model.Generate(ctx, req)
 		if err != nil {
-			return TurnOutput{}, err
+			modelLog.CompletedAt = time.Now().UTC()
+			modelLog.Error = err.Error()
+			modelLogs = append(modelLogs, modelLog)
+			return TurnOutput{
+				Messages:    append([]runtime.Message(nil), state.Messages...),
+				NewMessages: append([]runtime.Message(nil), state.Messages[newMessageStart:]...),
+				Plan:        state.Plan,
+				Events:      append([]runtime.Event(nil), events...),
+				ModelLogs:   append([]runtime.ModelLog(nil), modelLogs...),
+			}, err
 		}
+		modelLog.CompletedAt = time.Now().UTC()
+		modelLog.Response = runtime.ModelResponseLog{
+			Message: resp.Message,
+			Usage:   resp.Usage,
+		}
+		modelLogs = append(modelLogs, modelLog)
 		if err := eventSink(modelCompletedEvent(resp.Usage)); err != nil {
 			return TurnOutput{}, err
 		}
@@ -131,6 +149,7 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 				NewMessages: append([]runtime.Message(nil), state.Messages[newMessageStart:]...),
 				Plan:        state.Plan,
 				Events:      append([]runtime.Event(nil), events...),
+				ModelLogs:   append([]runtime.ModelLog(nil), modelLogs...),
 			}, nil
 		}
 		for _, call := range resp.Message.ToolCalls {
@@ -155,7 +174,25 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 		}
 	}
 
-	return TurnOutput{}, errors.New("agent turn exceeded max iterations")
+	return TurnOutput{
+		Messages:    append([]runtime.Message(nil), state.Messages...),
+		NewMessages: append([]runtime.Message(nil), state.Messages[newMessageStart:]...),
+		Plan:        state.Plan,
+		Events:      append([]runtime.Event(nil), events...),
+		ModelLogs:   append([]runtime.ModelLog(nil), modelLogs...),
+	}, errors.New("agent turn exceeded max iterations")
+}
+
+func newModelLog(index int, req model.Request) runtime.ModelLog {
+	return runtime.ModelLog{
+		Index:     index,
+		StartedAt: time.Now().UTC(),
+		Request: runtime.ModelRequestLog{
+			SystemPrompt: req.SystemPrompt,
+			Messages:     append([]runtime.Message(nil), req.Messages...),
+			Tools:        append([]runtime.ToolDefinition(nil), req.Tools...),
+		},
+	}
 }
 
 func timestampMessage(message runtime.Message) runtime.Message {

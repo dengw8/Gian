@@ -386,6 +386,15 @@ func TestRunReadAPIsReturnPersistedData(t *testing.T) {
 	if got := eventTypes(events); !reflect.DeepEqual(got, wantEvents) {
 		t.Fatalf("events = %#v", events)
 	}
+
+	var modelLogs []runtime.ModelLog
+	getJSON("/v1/runs/"+created.Run.ID+"/model-logs", &modelLogs)
+	if len(modelLogs) != 1 {
+		t.Fatalf("model log count = %d, want 1", len(modelLogs))
+	}
+	if modelLogs[0].Request.Messages[0].Content != "hello" || modelLogs[0].Response.Message.Content != "fake response: hello" {
+		t.Fatalf("model log = %#v", modelLogs[0])
+	}
 }
 
 func TestAppendTurnLoadsHistoryAndPersistsOnlyNewMessages(t *testing.T) {
@@ -493,6 +502,17 @@ func TestAppendTurnFailurePersistsFailedRunAndEvent(t *testing.T) {
 	}
 	if events[len(events)-1].Type != "turn_failed" {
 		t.Fatalf("last event = %#v, want turn_failed", events[len(events)-1])
+	}
+
+	modelLogs, err := runStore.ListModelLogs(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modelLogs) != 1 || modelLogs[0].Error != "model failed" {
+		t.Fatalf("model logs = %#v", modelLogs)
+	}
+	if modelLogs[0].Request.Messages[0].Content != "fail" {
+		t.Fatalf("model log request = %#v", modelLogs[0].Request)
 	}
 }
 

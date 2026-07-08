@@ -35,12 +35,19 @@ func TestStoreUsesInspectableRunLayout(t *testing.T) {
 	if err := localStore.AppendEvents(ctx, meta.ID, []runtime.Event{{Type: "run_created", CreatedAt: time.Now().UTC()}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := localStore.AppendModelLogs(ctx, meta.ID, []runtime.ModelLog{{
+		Index:     1,
+		StartedAt: time.Now().UTC(),
+		Request:   runtime.ModelRequestLog{SystemPrompt: "system"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := localStore.SavePlan(ctx, meta.ID, runtime.PlanState{Mode: runtime.PlanModePlanning}); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, name := range []string{"metadata.json", "messages.jsonl", "events.jsonl", "plan.json"} {
+	for _, name := range []string{"metadata.json", "messages.jsonl", "events.jsonl", "model_logs.jsonl", "plan.json"} {
 		path := filepath.Join(root, "runs", meta.ID, name)
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)

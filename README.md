@@ -295,6 +295,16 @@ curl -sS "$BASE/v1/runs/$RUN_ID/messages"
 curl -sS "$BASE/v1/runs/$RUN_ID/events"
 ```
 
+### Fetch Model I/O Logs
+
+Fetch the final model request and response for each model call in a Run:
+
+```bash
+curl -sS "$BASE/v1/runs/$RUN_ID/model-logs"
+```
+
+These logs contain the assembled system prompt, messages, tool definitions, assistant response, provider usage, and model errors. Provider credentials are not included.
+
 ### Plan Mode
 
 Enable read-only planning for a Run:
@@ -373,9 +383,10 @@ data/runs/<run_id>/
   plan.json
   messages.jsonl
   events.jsonl
+  model_logs.jsonl
 ```
 
-`messages.jsonl` and `events.jsonl` are append-only JSON Lines files.
+`messages.jsonl`, `events.jsonl`, and `model_logs.jsonl` are append-only JSON Lines files.
 
 Token usage is persisted in two places:
 
@@ -383,6 +394,8 @@ Token usage is persisted in two places:
 - Cumulative Run totals on `metadata.json`.
 
 `cached_tokens` is populated from provider usage details when the provider reports prompt-cache hits.
+
+Model I/O logs are persisted in `model_logs.jsonl` for reproducible debugging. Each entry stores the final request passed to the Model Provider and the response or error returned by that provider.
 
 ## Current Scope
 
@@ -401,6 +414,7 @@ Implemented:
 - ModelHub Provider
 - Run-level Plan Mode
 - Provider token/cache usage collection
+- Model I/O logging
 - Workspace Tools
 - Shell Tool with conservative safety policy
 - Message timestamps

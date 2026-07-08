@@ -55,6 +55,26 @@ type TokenUsage struct {
 	Raw              map[string]any `json:"raw,omitempty"`
 }
 
+type ModelRequestLog struct {
+	SystemPrompt string           `json:"system_prompt,omitempty"`
+	Messages     []Message        `json:"messages,omitempty"`
+	Tools        []ToolDefinition `json:"tools,omitempty"`
+}
+
+type ModelResponseLog struct {
+	Message Message     `json:"message,omitempty"`
+	Usage   *TokenUsage `json:"usage,omitempty"`
+}
+
+type ModelLog struct {
+	Index       int              `json:"index"`
+	StartedAt   time.Time        `json:"started_at"`
+	CompletedAt time.Time        `json:"completed_at,omitempty"`
+	Request     ModelRequestLog  `json:"request"`
+	Response    ModelResponseLog `json:"response,omitempty"`
+	Error       string           `json:"error,omitempty"`
+}
+
 type ToolCall struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
