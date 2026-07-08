@@ -1,0 +1,49 @@
+CONTEXT.md
+  s_94c3d41f0ddb1b::t_e7ffad547e90de 47-50
+README.md
+  s_94c3d41f0ddb1b::t_70954f12747449 298-307,386,389,398-399,417
+docs/superpowers/specs/2026-07-06-agent-service-design.md
+  s_94c3d41f0ddb1b::t_64f0977ffe0136 72-73,99,102,108-109,248,280-281,292,301
+internal/agent/agent.go
+  s_94c3d41f0ddb1b::t_e36c9612bd757c 39-43,82,114,117-131,133,152,177-195
+internal/agent/agent_test.go
+  s_94c3d41f0ddb1b::t_d1e912b84308c8 36-44
+internal/runtime/types.go
+  s_94c3d41f0ddb1b::t_186bc8ccdfb966 58-77
+internal/server/server.go
+  s_94c3d41f0ddb1b::t_4b488268bde38f 105,316-318,333-335,356-369,444-452
+internal/server/server_test.go
+  s_94c3d41f0ddb1b::t_a29daeacb5aaf7 389-397,506-516
+internal/server/web/app.js
+  s_94c3d41f0ddb1b::t_0a577088248b31 8,27,35,62,118,120,141,195-206,291,309,352,674-727,932
+internal/server/web/index.html
+  s_94c3d41f0ddb1b::t_6ac6922a538b8a 99-108
+internal/server/web/styles.css
+  s_94c3d41f0ddb1b::t_8dd9aed9cae39f 282,296,326,528-564
+internal/store/local/store.go
+  s_94c3d41f0ddb1b::t_6d05d0caca7779 269-294,311-314
+internal/store/local/store_test.go
+  s_94c3d41f0ddb1b::t_ce09ff80c5eccf 38-44,50
+internal/store/store.go
+  s_94c3d41f0ddb1b::t_265ff52132d9bd 53-54
+internal/store/storetest/contract.go
+  s_94c3d41f0ddb1b::t_2879007a69eea6 151-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ac948a64bf7825284d714a6466b3ed8e1db98aa8",
+  "prompts": {},
+  "sessions": {
+    "s_94c3d41f0ddb1b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f375d-3481-7020-aebc-dd3378c4da09",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
