@@ -46,8 +46,11 @@ func TestStoreUsesInspectableRunLayout(t *testing.T) {
 	if _, err := localStore.SavePlan(ctx, meta.ID, runtime.PlanState{Mode: runtime.PlanModePlanning}); err != nil {
 		t.Fatal(err)
 	}
+	if err := localStore.SaveCompaction(ctx, meta.ID, runtime.CompactionState{Enabled: true, Summary: "summary"}); err != nil {
+		t.Fatal(err)
+	}
 
-	for _, name := range []string{"metadata.json", "messages.jsonl", "events.jsonl", "model_logs.jsonl", "plan.json"} {
+	for _, name := range []string{"metadata.json", "messages.jsonl", "events.jsonl", "model_logs.jsonl", "plan.json", "compaction.json"} {
 		path := filepath.Join(root, "runs", meta.ID, name)
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)

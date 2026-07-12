@@ -27,7 +27,8 @@ func TestCreateRunCompletesNoToolTurn(t *testing.T) {
 		Model:         model.NewFakeProvider(),
 		MaxIterations: 2,
 	})
-	runStore := local.New(t.TempDir())
+	root := t.TempDir()
+	runStore := local.New(root)
 	srv := New(Config{Runner: runner, Store: runStore, ModelProvider: "fake"})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/runs", bytes.NewBufferString(`{"message":"hello"}`))
@@ -65,6 +66,9 @@ func TestCreateRunCompletesNoToolTurn(t *testing.T) {
 	}
 	if len(persistedMessages) != 2 {
 		t.Fatalf("persisted message count = %d, want 2", len(persistedMessages))
+	}
+	if _, err := os.Stat(filepath.Join(root, "runs", resp.Run.ID, "compaction.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("compaction file err = %v, want not exist when compaction is disabled", err)
 	}
 }
 
@@ -440,6 +444,70 @@ func TestAppendTurnLoadsHistoryAndPersistsOnlyNewMessages(t *testing.T) {
 	}
 	if len(persistedMessages) != 4 {
 		t.Fatalf("persisted message count = %d, want 4", len(persistedMessages))
+	}
+}
+
+func TestAppendTurnPersistsCompactionAndLogsCompactedRequest(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	srv := New(Config{
+		Runner: agent.NewRunner(agent.Config{
+			Model: model.NewFakeProvider(),
+			Middleware: []agent.Middleware{agent.CompactionMiddleware{
+				Enabled:     true,
+				MaxMessages: 2,
+				KeepRecent:  1,
+			}},
+		}),
+		Store:         runStore,
+		ModelProvider: "fake",
+	})
+
+	created := createRunForTest(t, srv, `{"message":"first"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+created.Run.ID+"/turns", bytes.NewBufferString(`{"message":"second"}`))
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	messages, err := runStore.ListMessages(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 4 {
+		t.Fatalf("persisted message count = %d, want full history length 4", len(messages))
+	}
+
+	compaction, err := runStore.GetCompaction(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compaction.Enabled || compaction.CompactedMessages != 2 || compaction.KeepRecent != 1 {
+		t.Fatalf("compaction = %#v", compaction)
+	}
+	if !strings.Contains(compaction.Summary, "fake response: first") {
+		t.Fatalf("compaction summary = %q, want first turn summary", compaction.Summary)
+	}
+
+	modelLogs, err := runStore.ListModelLogs(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modelLogs) != 2 {
+		t.Fatalf("model log count = %d, want 2", len(modelLogs))
+	}
+	secondRequest := modelLogs[1].Request
+	if strings.Contains(secondRequest.SystemPrompt, "# Compacted Conversation Context") {
+		t.Fatalf("second request system prompt should not include compaction: %s", secondRequest.SystemPrompt)
+	}
+	if len(secondRequest.Messages) != 2 {
+		t.Fatalf("second request messages = %#v, want summary and current user message", secondRequest.Messages)
+	}
+	if secondRequest.Messages[0].Role != runtime.RoleUser || !strings.Contains(secondRequest.Messages[0].Content, "# Compacted Conversation Context") {
+		t.Fatalf("second request first message should be compaction summary: %#v", secondRequest.Messages[0])
+	}
+	if secondRequest.Messages[1].Role != runtime.RoleUser || secondRequest.Messages[1].Content != "second" {
+		t.Fatalf("second request second message = %#v, want current user message", secondRequest.Messages[1])
 	}
 }
 

@@ -46,6 +46,8 @@ type RunStore interface {
 	UpdateRun(ctx context.Context, runID string, input UpdateRunInput) (RunMetadata, error)
 	GetPlan(ctx context.Context, runID string) (runtime.PlanState, error)
 	SavePlan(ctx context.Context, runID string, plan runtime.PlanState) (RunMetadata, error)
+	GetCompaction(ctx context.Context, runID string) (runtime.CompactionState, error)
+	SaveCompaction(ctx context.Context, runID string, state runtime.CompactionState) error
 	AppendMessages(ctx context.Context, runID string, messages []runtime.Message) error
 	ListMessages(ctx context.Context, runID string) ([]runtime.Message, error)
 	AppendEvents(ctx context.Context, runID string, events []runtime.Event) error

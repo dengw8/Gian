@@ -130,6 +130,109 @@ func TestRunnerLoadsHistoryBeforeNewTurn(t *testing.T) {
 	}
 }
 
+func TestCompactionMiddlewareCompactsOldMessagesBeforeModel(t *testing.T) {
+	recorder := &requestRecordingProvider{
+		response: runtime.Message{Role: runtime.RoleAssistant, Content: "fifth response"},
+	}
+	runner := NewRunner(Config{
+		Model: recorder,
+		Middleware: []Middleware{CompactionMiddleware{
+			Enabled:     true,
+			MaxMessages: 4,
+			KeepRecent:  2,
+		}},
+	})
+
+	history := []runtime.Message{
+		{Role: runtime.RoleUser, Content: "first"},
+		{Role: runtime.RoleAssistant, Content: "second"},
+		{Role: runtime.RoleUser, Content: "third"},
+		{Role: runtime.RoleAssistant, Content: "fourth"},
+	}
+	out, err := runner.RunTurn(context.Background(), TurnInput{
+		History: history,
+		Message: "fifth",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(recorder.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(recorder.requests))
+	}
+	gotMessages := clearMessageTimes(recorder.requests[0].Messages)
+	wantMessages := []runtime.Message{
+		{
+			Role: runtime.RoleUser,
+			Content: "# Compacted Conversation Context\n" +
+				"The following is a deterministic summary of earlier conversation messages. Recent original messages are preserved separately.\n\n" +
+				"Compacted 3 earlier message(s); keeping 2 recent message(s).\n\n" +
+				"1. user: first\n" +
+				"2. assistant: second\n" +
+				"3. user: third",
+		},
+		{Role: runtime.RoleAssistant, Content: "fourth"},
+		{Role: runtime.RoleUser, Content: "fifth"},
+	}
+	if !reflect.DeepEqual(gotMessages, wantMessages) {
+		t.Fatalf("request messages = %#v, want %#v", gotMessages, wantMessages)
+	}
+	if strings.Contains(recorder.requests[0].SystemPrompt, "# Compacted Conversation Context") {
+		t.Fatalf("system prompt should not include compaction context: %s", recorder.requests[0].SystemPrompt)
+	}
+	if len(out.Messages) != 6 {
+		t.Fatalf("output messages = %d, want full un-compacted history length 6", len(out.Messages))
+	}
+	if !out.Compaction.Enabled || out.Compaction.CompactedMessages != 3 || out.Compaction.KeepRecent != 2 {
+		t.Fatalf("compaction = %#v", out.Compaction)
+	}
+}
+
+func TestCompactionMiddlewareKeepsAssistantToolCallWithToolResult(t *testing.T) {
+	args := json.RawMessage(`{"path":"note.txt"}`)
+	recorder := &requestRecordingProvider{
+		response: runtime.Message{Role: runtime.RoleAssistant, Content: "next response"},
+	}
+	runner := NewRunner(Config{
+		Model: recorder,
+		Middleware: []Middleware{CompactionMiddleware{
+			Enabled:     true,
+			MaxMessages: 4,
+			KeepRecent:  3,
+		}},
+	})
+
+	history := []runtime.Message{
+		{Role: runtime.RoleUser, Content: "read note"},
+		{Role: runtime.RoleAssistant, ToolCalls: []runtime.ToolCall{{ID: "call_1", Name: "read_file", Arguments: args}}},
+		{Role: runtime.RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "note content"},
+		{Role: runtime.RoleAssistant, Content: "note content says hello"},
+	}
+	if _, err := runner.RunTurn(context.Background(), TurnInput{
+		History: history,
+		Message: "continue",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(recorder.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(recorder.requests))
+	}
+	gotMessages := recorder.requests[0].Messages
+	if len(gotMessages) != 5 {
+		t.Fatalf("request messages = %d, want 5 including summary and tool call/result pair: %#v", len(gotMessages), gotMessages)
+	}
+	if gotMessages[0].Role != runtime.RoleUser || !strings.Contains(gotMessages[0].Content, "# Compacted Conversation Context") {
+		t.Fatalf("first request message should be compaction summary: %#v", gotMessages[0])
+	}
+	if gotMessages[1].Role != runtime.RoleAssistant || len(gotMessages[1].ToolCalls) != 1 {
+		t.Fatalf("second request message should preserve assistant tool call: %#v", gotMessages[1])
+	}
+	if gotMessages[2].Role != runtime.RoleTool || gotMessages[2].ToolCallID != "call_1" {
+		t.Fatalf("third request message should preserve tool result: %#v", gotMessages[2])
+	}
+}
+
 func TestRunnerPreservesUserAttachments(t *testing.T) {
 	recorder := &requestRecordingProvider{
 		response: runtime.Message{Role: runtime.RoleAssistant, Content: "saw image"},

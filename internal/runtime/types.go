@@ -75,6 +75,18 @@ type ModelLog struct {
 	Error       string           `json:"error,omitempty"`
 }
 
+type CompactionState struct {
+	Enabled           bool      `json:"enabled"`
+	Summary           string    `json:"summary,omitempty"`
+	CompactedMessages int       `json:"compacted_messages,omitempty"`
+	KeepRecent        int       `json:"keep_recent,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at,omitempty"`
+}
+
+func EmptyCompactionState() CompactionState {
+	return CompactionState{}
+}
+
 type ToolCall struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`

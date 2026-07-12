@@ -28,11 +28,55 @@ func TestLoadFileAppliesDefaults(t *testing.T) {
 	if cfg.Agent.MaxIterations != defaultMaxIterations {
 		t.Fatalf("max iterations = %d, want %d", cfg.Agent.MaxIterations, defaultMaxIterations)
 	}
+	if cfg.Agent.CompactionEnabled {
+		t.Fatal("compaction enabled by default")
+	}
+	if cfg.Agent.CompactionMaxMessages != defaultCompactionMaxMessages {
+		t.Fatalf("compaction max messages = %d, want %d", cfg.Agent.CompactionMaxMessages, defaultCompactionMaxMessages)
+	}
+	if cfg.Agent.CompactionKeepRecent != defaultCompactionKeepRecent {
+		t.Fatalf("compaction keep recent = %d, want %d", cfg.Agent.CompactionKeepRecent, defaultCompactionKeepRecent)
+	}
 	if cfg.Storage.LocalDir != "data" {
 		t.Fatalf("local dir = %q, want data", cfg.Storage.LocalDir)
 	}
 	if cfg.Tools.Workspace != "." {
 		t.Fatalf("workspace = %q, want .", cfg.Tools.Workspace)
+	}
+}
+
+func TestLoadFileReadsCompactionConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("agent:\n  compaction_enabled: true\n  compaction_max_messages: 12\n  compaction_keep_recent: 4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Agent.CompactionEnabled {
+		t.Fatal("compaction enabled = false, want true")
+	}
+	if cfg.Agent.CompactionMaxMessages != 12 || cfg.Agent.CompactionKeepRecent != 4 {
+		t.Fatalf("compaction config = max %d keep %d", cfg.Agent.CompactionMaxMessages, cfg.Agent.CompactionKeepRecent)
+	}
+}
+
+func TestLoadFileNormalizesCompactionConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("agent:\n  compaction_max_messages: 3\n  compaction_keep_recent: 9\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.CompactionMaxMessages != 3 || cfg.Agent.CompactionKeepRecent != 2 {
+		t.Fatalf("compaction config = max %d keep %d, want max 3 keep 2", cfg.Agent.CompactionMaxMessages, cfg.Agent.CompactionKeepRecent)
 	}
 }
 

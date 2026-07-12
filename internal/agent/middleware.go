@@ -12,6 +12,7 @@ type State struct {
 	Messages     []runtime.Message `json:"messages"`
 	Metadata     map[string]any    `json:"metadata"`
 	Plan         runtime.PlanState `json:"plan"`
+	Compaction   runtime.CompactionState
 	ActiveTools  []runtime.ToolDefinition
 }
 

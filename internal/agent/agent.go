@@ -32,15 +32,17 @@ type TurnInput struct {
 	Attachments []runtime.Attachment
 	History     []runtime.Message
 	Plan        runtime.PlanState
+	Compaction  runtime.CompactionState
 	Events      EventSink
 }
 
 type TurnOutput struct {
-	Messages    []runtime.Message  `json:"messages"`
-	NewMessages []runtime.Message  `json:"new_messages"`
-	Plan        runtime.PlanState  `json:"plan"`
-	Events      []runtime.Event    `json:"events,omitempty"`
-	ModelLogs   []runtime.ModelLog `json:"model_logs,omitempty"`
+	Messages    []runtime.Message       `json:"messages"`
+	NewMessages []runtime.Message       `json:"new_messages"`
+	Plan        runtime.PlanState       `json:"plan"`
+	Compaction  runtime.CompactionState `json:"compaction"`
+	Events      []runtime.Event         `json:"events,omitempty"`
+	ModelLogs   []runtime.ModelLog      `json:"model_logs,omitempty"`
 }
 
 type EventSink func(event runtime.Event) error
@@ -74,8 +76,9 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 			Content:     input.Message,
 			Attachments: append([]runtime.Attachment(nil), input.Attachments...),
 		})),
-		Metadata: map[string]any{},
-		Plan:     normalizePlan(input.Plan),
+		Metadata:   map[string]any{},
+		Plan:       normalizePlan(input.Plan),
+		Compaction: input.Compaction,
 	}
 	newMessageStart := len(history)
 	events := []runtime.Event{}
@@ -121,6 +124,7 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 				Messages:    append([]runtime.Message(nil), state.Messages...),
 				NewMessages: append([]runtime.Message(nil), state.Messages[newMessageStart:]...),
 				Plan:        state.Plan,
+				Compaction:  state.Compaction,
 				Events:      append([]runtime.Event(nil), events...),
 				ModelLogs:   append([]runtime.ModelLog(nil), modelLogs...),
 			}, err
@@ -148,6 +152,7 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 				Messages:    append([]runtime.Message(nil), state.Messages...),
 				NewMessages: append([]runtime.Message(nil), state.Messages[newMessageStart:]...),
 				Plan:        state.Plan,
+				Compaction:  state.Compaction,
 				Events:      append([]runtime.Event(nil), events...),
 				ModelLogs:   append([]runtime.ModelLog(nil), modelLogs...),
 			}, nil
@@ -178,6 +183,7 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 		Messages:    append([]runtime.Message(nil), state.Messages...),
 		NewMessages: append([]runtime.Message(nil), state.Messages[newMessageStart:]...),
 		Plan:        state.Plan,
+		Compaction:  state.Compaction,
 		Events:      append([]runtime.Event(nil), events...),
 		ModelLogs:   append([]runtime.ModelLog(nil), modelLogs...),
 	}, errors.New("agent turn exceeded max iterations")

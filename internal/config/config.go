@@ -12,6 +12,8 @@ import (
 const defaultAddr = ":8080"
 const defaultProvider = "fake"
 const defaultMaxIterations = 4
+const defaultCompactionMaxMessages = 20
+const defaultCompactionKeepRecent = 8
 const APIKeyEnv = "AGENT_MODEL_API_KEY"
 const ModelHubAKEnv = "AGENT_MODELHUB_AK"
 
@@ -47,7 +49,10 @@ type ModelHubConfig struct {
 }
 
 type AgentConfig struct {
-	MaxIterations int `yaml:"max_iterations"`
+	MaxIterations         int  `yaml:"max_iterations"`
+	CompactionEnabled     bool `yaml:"compaction_enabled"`
+	CompactionMaxMessages int  `yaml:"compaction_max_messages"`
+	CompactionKeepRecent  int  `yaml:"compaction_keep_recent"`
 }
 
 type StorageConfig struct {
@@ -102,6 +107,15 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Agent.MaxIterations <= 0 {
 		c.Agent.MaxIterations = defaultMaxIterations
+	}
+	if c.Agent.CompactionMaxMessages <= 1 {
+		c.Agent.CompactionMaxMessages = defaultCompactionMaxMessages
+	}
+	if c.Agent.CompactionKeepRecent <= 0 {
+		c.Agent.CompactionKeepRecent = defaultCompactionKeepRecent
+	}
+	if c.Agent.CompactionKeepRecent >= c.Agent.CompactionMaxMessages {
+		c.Agent.CompactionKeepRecent = c.Agent.CompactionMaxMessages - 1
 	}
 	if c.Storage.LocalDir == "" {
 		c.Storage.LocalDir = "data"

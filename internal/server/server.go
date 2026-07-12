@@ -172,7 +172,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, nil, plan, nil)
+	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, nil, plan, runtime.EmptyCompactionState(), nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
@@ -223,8 +223,13 @@ func (s *Server) handleAppendTurn(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	compaction, err := s.store.GetCompaction(r.Context(), runID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 
-	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, history, plan, nil)
+	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, history, plan, compaction, nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
@@ -281,14 +286,19 @@ func (s *Server) handleAppendTurnStream(w http.ResponseWriter, r *http.Request) 
 		stream.write(runtime.NewEvent("turn_failed", err.Error()))
 		return
 	}
+	compaction, err := s.store.GetCompaction(r.Context(), runID)
+	if err != nil {
+		stream.write(runtime.NewEvent("turn_failed", err.Error()))
+		return
+	}
 
-	_, _, err = s.executeTurn(r, meta, message, req.Attachments, history, plan, stream.write)
+	_, _, err = s.executeTurn(r, meta, message, req.Attachments, history, plan, compaction, stream.write)
 	if err != nil {
 		return
 	}
 }
 
-func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message string, attachments []runtime.Attachment, history []runtime.Message, plan runtime.PlanState, sink agent.EventSink) (agent.TurnOutput, store.RunMetadata, error) {
+func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message string, attachments []runtime.Attachment, history []runtime.Message, plan runtime.PlanState, compaction runtime.CompactionState, sink agent.EventSink) (agent.TurnOutput, store.RunMetadata, error) {
 	if s.runner == nil {
 		return agent.TurnOutput{}, meta, errors.New("agent runner is not configured")
 	}
@@ -308,6 +318,7 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 		Message:     message,
 		Attachments: attachments,
 		Plan:        plan,
+		Compaction:  compaction,
 		Events: func(event runtime.Event) error {
 			return s.emitAndPersist(r, meta.ID, event, sink)
 		},
@@ -342,6 +353,11 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 	meta, err = s.store.SavePlan(r.Context(), meta.ID, out.Plan)
 	if err != nil {
 		return agent.TurnOutput{}, meta, err
+	}
+	if out.Compaction.Enabled {
+		if err := s.store.SaveCompaction(r.Context(), meta.ID, out.Compaction); err != nil {
+			return agent.TurnOutput{}, meta, err
+		}
 	}
 	if err := s.emitAndPersist(r, meta.ID, runtime.NewEvent("turn_completed", "Turn completed"), sink); err != nil {
 		return agent.TurnOutput{}, meta, err

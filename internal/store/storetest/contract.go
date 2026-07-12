@@ -216,6 +216,40 @@ func RunStoreContract(t *testing.T, newStore Factory) {
 		}
 	})
 
+	t.Run("compaction state", func(t *testing.T) {
+		runStore := newStore(t)
+		meta, err := runStore.CreateRun(context.Background(), store.CreateRunInput{ModelProvider: "fake"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		empty, err := runStore.GetCompaction(context.Background(), meta.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if empty.Enabled {
+			t.Fatalf("empty compaction = %#v, want disabled", empty)
+		}
+
+		state := runtime.CompactionState{
+			Enabled:           true,
+			Summary:           "summary",
+			CompactedMessages: 4,
+			KeepRecent:        2,
+			UpdatedAt:         time.Now().UTC(),
+		}
+		if err := runStore.SaveCompaction(context.Background(), meta.ID, state); err != nil {
+			t.Fatal(err)
+		}
+		got, err := runStore.GetCompaction(context.Background(), meta.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, state) {
+			t.Fatalf("compaction = %#v, want %#v", got, state)
+		}
+	})
+
 	t.Run("list runs newest updated first", func(t *testing.T) {
 		runStore := newStore(t)
 

@@ -41,7 +41,11 @@ func main() {
 			agent.NoopMiddleware{NameValue: "bootstrap"},
 			agent.SafetyMiddleware{},
 			agent.PlanModeMiddleware{},
-			agent.CompactionMiddleware{},
+			agent.CompactionMiddleware{
+				Enabled:     cfg.Agent.CompactionEnabled,
+				MaxMessages: cfg.Agent.CompactionMaxMessages,
+				KeepRecent:  cfg.Agent.CompactionKeepRecent,
+			},
 			agent.SubAgentMiddleware{},
 		},
 	})

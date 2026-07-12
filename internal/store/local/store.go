@@ -214,6 +214,47 @@ func (s *Store) SavePlan(ctx context.Context, runID string, plan runtime.PlanSta
 	return meta, nil
 }
 
+func (s *Store) GetCompaction(ctx context.Context, runID string) (runtime.CompactionState, error) {
+	if err := ctx.Err(); err != nil {
+		return runtime.CompactionState{}, err
+	}
+	if err := validateRunID(runID); err != nil {
+		return runtime.CompactionState{}, err
+	}
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return runtime.CompactionState{}, err
+	}
+
+	data, err := os.ReadFile(s.compactionPath(runID))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return runtime.EmptyCompactionState(), nil
+		}
+		return runtime.CompactionState{}, err
+	}
+	var state runtime.CompactionState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return runtime.CompactionState{}, err
+	}
+	return state, nil
+}
+
+func (s *Store) SaveCompaction(ctx context.Context, runID string, state runtime.CompactionState) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateRunID(runID); err != nil {
+		return err
+	}
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return err
+	}
+	if !state.UpdatedAt.IsZero() {
+		state.UpdatedAt = state.UpdatedAt.UTC()
+	}
+	return s.writeCompaction(runID, state)
+}
+
 func (s *Store) AppendMessages(ctx context.Context, runID string, messages []runtime.Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -316,6 +357,10 @@ func (s *Store) planPath(runID string) string {
 	return filepath.Join(s.runDir(runID), "plan.json")
 }
 
+func (s *Store) compactionPath(runID string) string {
+	return filepath.Join(s.runDir(runID), "compaction.json")
+}
+
 func (s *Store) writeMetadata(meta store.RunMetadata) error {
 	if err := os.MkdirAll(s.runDir(meta.ID), 0o755); err != nil {
 		return err
@@ -338,6 +383,18 @@ func (s *Store) writePlan(runID string, plan runtime.PlanState) error {
 	}
 	data = append(data, '\n')
 	return os.WriteFile(s.planPath(runID), data, 0o644)
+}
+
+func (s *Store) writeCompaction(runID string, state runtime.CompactionState) error {
+	if err := os.MkdirAll(s.runDir(runID), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(s.compactionPath(runID), data, 0o644)
 }
 
 func appendJSONLines[T any](path string, values []T) error {
