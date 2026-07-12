@@ -1,0 +1,41 @@
+cmd/agent-service/main.go
+  s_af73fa272d02f7::t_c732ac1d2ae723 44-48
+internal/agent/agent.go
+  s_af73fa272d02f7::t_9913d4a8d68503 35,40-45,79-81,127,155,186
+internal/agent/middleware.go
+  s_af73fa272d02f7::t_eae7dca1b1e371 15
+internal/config/config.go
+  s_af73fa272d02f7::t_8f20c040b468a0 15-16,52-55,111-119
+internal/config/config_test.go
+  s_af73fa272d02f7::t_f38cc504554c9a 31-39,48-82
+internal/runtime/types.go
+  s_af73fa272d02f7::t_2e82b7dfac90e8 78-89
+internal/server/server.go
+  s_af73fa272d02f7::t_6c900662e70f62 175,226-230,232,289-293,295,301,321,357-361
+internal/store/local/store.go
+  s_af73fa272d02f7::t_070ac6771bfcd1 217-257,360-363,388-399
+internal/store/local/store_test.go
+  s_af73fa272d02f7::t_e26ab797f379d7 49-51,53
+internal/store/store.go
+  s_af73fa272d02f7::t_2ecd7969d85a44 49-50
+internal/store/storetest/contract.go
+  s_af73fa272d02f7::t_e798d440e2ce2b 219-252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "61d7364c2bba18a5e497b069ba61f697def63e2e",
+  "prompts": {},
+  "sessions": {
+    "s_af73fa272d02f7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4115-60e2-7a62-9683-7d752d19ec53",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
