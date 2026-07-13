@@ -1,0 +1,21 @@
+docs/superpowers/plans/2026-07-13-mysql-run-store.md
+  s_0e1ff253631997::t_1335383c48d2c7 1-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2ff45bb046093b470f7636a7edd81991fad8f097",
+  "prompts": {},
+  "sessions": {
+    "s_0e1ff253631997": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5a59-1487-7063-a2e6-40badcd2a586",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
