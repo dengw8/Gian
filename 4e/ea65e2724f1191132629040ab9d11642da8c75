@@ -1,0 +1,73 @@
+AGENTS.md
+  s_7439529d0b412f::t_adfd3411c53801 7
+cmd/agent-service/main.go
+  s_7439529d0b412f::t_59871959580032 9-16
+docs/agents/issue-tracker.md
+  s_7439529d0b412f::t_ce291241668137 7
+go.mod
+  s_7439529d0b412f::t_71b5b0f5f01ef3 1
+internal/agent/agent.go
+  s_7439529d0b412f::t_b89caeab93007f 9-11
+internal/agent/agent_test.go
+  s_7439529d0b412f::t_cc53dbd0fb63ab 12-14
+internal/agent/extensions.go
+  s_7439529d0b412f::t_9c10edfe317987 10-12
+internal/agent/middleware.go
+  s_7439529d0b412f::t_060c7ab2ca22d8 6-7
+internal/agent/plan.go
+  s_7439529d0b412f::t_c2520776a73dc2 8
+internal/agent/prompt.go
+  s_7439529d0b412f::t_8aec767befab35 7
+internal/agent/safety.go
+  s_7439529d0b412f::t_0662be1445c9c6 6-7
+internal/model/model.go
+  s_7439529d0b412f::t_b78ab28ec8495f 9
+internal/model/modelhub.go
+  s_7439529d0b412f::t_a3d1a5a2c96f87 14
+internal/model/modelhub_test.go
+  s_7439529d0b412f::t_52f96c503e779e 10
+internal/model/openai_compatible.go
+  s_7439529d0b412f::t_c748098193ce4f 12
+internal/model/openai_compatible_test.go
+  s_7439529d0b412f::t_80d1079149eef3 10
+internal/server/server.go
+  s_7439529d0b412f::t_e9444f23df0de5 14-16
+internal/server/server_test.go
+  s_7439529d0b412f::t_10292e706ebeb9 17-22
+internal/store/local/store.go
+  s_7439529d0b412f::t_63606f9c6c8972 17-18
+internal/store/local/store_test.go
+  s_7439529d0b412f::t_6b1031fb1981bd 11-13
+internal/store/mysql/store.go
+  s_7439529d0b412f::t_63024cd2e35d0f 20-21
+internal/store/mysql/store_test.go
+  s_7439529d0b412f::t_4f710d859bb38c 11-13
+internal/store/store.go
+  s_7439529d0b412f::t_584240da4a7aec 7
+internal/store/storetest/contract.go
+  s_7439529d0b412f::t_4659bc0855fb1a 10-11
+internal/tools/shell.go
+  s_7439529d0b412f::t_56dfe06e68e430 10
+internal/tools/tool.go
+  s_7439529d0b412f::t_fa264545bbe36a 9
+internal/tools/workspace.go
+  s_7439529d0b412f::t_f3d79bbf444462 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4eea65e2724f1191132629040ab9d11642da8c75",
+  "prompts": {},
+  "sessions": {
+    "s_7439529d0b412f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5b5d-bdea-74c1-922d-628ca8aa5fea",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
