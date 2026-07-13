@@ -16,6 +16,7 @@ const defaultCompactionMaxMessages = 20
 const defaultCompactionKeepRecent = 8
 const APIKeyEnv = "AGENT_MODEL_API_KEY"
 const ModelHubAKEnv = "AGENT_MODELHUB_AK"
+const MySQLPasswordEnv = "AGENT_STORAGE_MYSQL_PASSWORD"
 
 type Config struct {
 	Server  ServerConfig  `yaml:"server"`
@@ -56,7 +57,18 @@ type AgentConfig struct {
 }
 
 type StorageConfig struct {
-	LocalDir string `yaml:"local_dir"`
+	Driver   string             `yaml:"driver"`
+	LocalDir string             `yaml:"local_dir"`
+	MySQL    MySQLStorageConfig `yaml:"mysql"`
+}
+
+type MySQLStorageConfig struct {
+	PSM      string `yaml:"psm"`
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Database string `yaml:"database"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 type ToolsConfig struct {
@@ -120,12 +132,26 @@ func (c *Config) applyDefaults() {
 	if c.Storage.LocalDir == "" {
 		c.Storage.LocalDir = "data"
 	}
+	if c.Storage.Driver == "" {
+		c.Storage.Driver = "local"
+	}
+	c.Storage.Driver = strings.TrimSpace(c.Storage.Driver)
+	if password := os.Getenv(MySQLPasswordEnv); password != "" {
+		c.Storage.MySQL.Password = password
+	}
 	if c.Tools.Workspace == "" {
 		c.Tools.Workspace = "."
 	}
 }
 
 func (c Config) Validate() error {
+	if err := c.validateModel(); err != nil {
+		return err
+	}
+	return c.validateStorage()
+}
+
+func (c Config) validateModel() error {
 	switch c.Model.Provider {
 	case "fake":
 		return nil
@@ -153,5 +179,31 @@ func (c Config) Validate() error {
 		return nil
 	default:
 		return fmt.Errorf("unsupported model provider %q", c.Model.Provider)
+	}
+}
+
+func (c Config) validateStorage() error {
+	switch c.Storage.Driver {
+	case "local":
+		return nil
+	case "mysql":
+		mysql := c.Storage.MySQL
+		for name, value := range map[string]string{
+			"storage.mysql.psm":      mysql.PSM,
+			"storage.mysql.host":     mysql.Host,
+			"storage.mysql.database": mysql.Database,
+			"storage.mysql.username": mysql.Username,
+			"storage.mysql.password": mysql.Password,
+		} {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("%s is required for mysql storage", name)
+			}
+		}
+		if mysql.Port < 1 || mysql.Port > 65535 {
+			return fmt.Errorf("storage.mysql.port must be between 1 and 65535 for mysql storage")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported storage driver %q", c.Storage.Driver)
 	}
 }

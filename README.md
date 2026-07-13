@@ -34,6 +34,7 @@ model:
 agent:
   max_iterations: 4
 storage:
+  driver: "local"
   local_dir: "data"
 tools:
   workspace: "."
@@ -375,7 +376,8 @@ The Shell Tool rejects destructive commands and command chaining before executio
 
 ## Persistence
 
-Local persistence is stored under `storage.local_dir`:
+`storage.driver` defaults to `local`. Local persistence is stored under
+`storage.local_dir`:
 
 ```text
 data/runs/<run_id>/
@@ -397,6 +399,31 @@ Token usage is persisted in two places:
 
 Model I/O logs are persisted in `model_logs.jsonl` for reproducible debugging. Each entry stores the final request passed to the Model Provider and the response or error returned by that provider.
 
+### MySQL Store
+
+Set `storage.driver` to `mysql` to persist Runs in MySQL:
+
+```yaml
+storage:
+  driver: "mysql"
+  mysql:
+    psm: "agent-service"
+    host: "mysql.example.com"
+    port: 3306
+    database: "agent"
+    username: "agent_user"
+    password: "replace-in-ignored-config.yaml"
+```
+
+The password can be stored in the ignored `config.yaml`. A non-empty
+`AGENT_STORAGE_MYSQL_PASSWORD` overrides it.
+
+Before starting with the MySQL driver, apply
+[`migrations/mysql/001_create_agent_store.sql`](migrations/mysql/001_create_agent_store.sql)
+to the selected database. The service only pings MySQL and verifies that the
+five required tables exist; it never runs migrations or other DDL. Switching
+between local and MySQL does not migrate or dual-write existing Run data.
+
 ## Current Scope
 
 Implemented:
@@ -406,6 +433,7 @@ Implemented:
 - Run history API
 - Multi-Turn execution
 - Local Store
+- MySQL Store
 - Run Store contract tests
 - HTTP JSON API
 - SSE Turn Event Stream

@@ -40,6 +40,9 @@ func TestLoadFileAppliesDefaults(t *testing.T) {
 	if cfg.Storage.LocalDir != "data" {
 		t.Fatalf("local dir = %q, want data", cfg.Storage.LocalDir)
 	}
+	if cfg.Storage.Driver != "local" {
+		t.Fatalf("storage driver = %q, want local", cfg.Storage.Driver)
+	}
 	if cfg.Tools.Workspace != "." {
 		t.Fatalf("workspace = %q, want .", cfg.Tools.Workspace)
 	}
@@ -162,5 +165,74 @@ func TestValidateModelHubRequiresAK(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), ModelHubAKEnv) {
 		t.Fatalf("err = %v, want missing ak error", err)
+	}
+}
+
+func TestLoadFileReadsMySQLStorageConfig(t *testing.T) {
+	t.Setenv(MySQLPasswordEnv, "")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := []byte("storage:\n  driver: mysql\n  mysql:\n    psm: agent-service\n    host: mysql.example.test\n    port: 3306\n    database: agent\n    username: agent_user\n    password: file-password\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Storage.Driver != "mysql" {
+		t.Fatalf("storage driver = %q, want mysql", cfg.Storage.Driver)
+	}
+	if cfg.Storage.MySQL.Password != "file-password" {
+		t.Fatalf("mysql password = %q, want file password", cfg.Storage.MySQL.Password)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadFileMySQLPasswordEnvOverridesConfig(t *testing.T) {
+	t.Setenv(MySQLPasswordEnv, "environment-password")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := []byte("storage:\n  driver: mysql\n  mysql:\n    psm: agent-service\n    host: mysql.example.test\n    port: 3306\n    database: agent\n    username: agent_user\n    password: file-password\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Storage.MySQL.Password != "environment-password" {
+		t.Fatalf("mysql password = %q, want environment password", cfg.Storage.MySQL.Password)
+	}
+}
+
+func TestValidateMySQLStorageRequiresConnectionFields(t *testing.T) {
+	cfg := Default()
+	cfg.Storage.Driver = "mysql"
+	cfg.Storage.MySQL = MySQLStorageConfig{
+		PSM:      "agent-service",
+		Host:     "mysql.example.test",
+		Port:     3306,
+		Database: "agent",
+		Username: "agent_user",
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "storage.mysql.password") {
+		t.Fatalf("err = %v, want missing mysql password error", err)
+	}
+}
+
+func TestValidateRejectsUnknownStorageDriver(t *testing.T) {
+	cfg := Default()
+	cfg.Storage.Driver = "postgres"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unsupported storage driver") {
+		t.Fatalf("err = %v, want unsupported storage driver error", err)
 	}
 }

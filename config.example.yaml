@@ -9,6 +9,14 @@ model:
 agent:
   max_iterations: 4
 storage:
+  driver: "local"
   local_dir: "data"
+  mysql:
+    psm: "agent-service"
+    host: "mysql.example.com"
+    port: 3306
+    database: "agent"
+    username: "agent_user"
+    password: "replace-me"
 tools:
   workspace: "."

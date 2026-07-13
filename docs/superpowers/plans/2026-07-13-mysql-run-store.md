@@ -4,7 +4,7 @@
 keeping local-file storage as the default and requiring operators to apply the
 schema SQL before use.
 
-**Precondition:** An operator applies `deploy/mysql/001_create_agent_store.sql`
+**Precondition:** An operator applies `migrations/mysql/001_create_agent_store.sql`
 to the configured database. The application never runs migrations or other DDL.
 
 ## 1. Add the MySQL dependencies
@@ -34,7 +34,7 @@ to the configured database. The application never runs migrations or other DDL.
 
 ## 3. Supply the operator-applied schema
 
-**Files:** `deploy/mysql/001_create_agent_store.sql`
+**Files:** `migrations/mysql/001_create_agent_store.sql`
 
 1. Create `agent_runs`, `agent_run_messages`, `agent_run_events`,
    `agent_model_logs`, and `agent_run_states` using `CREATE TABLE IF NOT

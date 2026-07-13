@@ -78,7 +78,7 @@ for shutdown. `RunStore` itself remains unchanged.
 
 ## Schema
 
-The implementation adds `deploy/mysql/001_create_agent_store.sql`. Operators
+The implementation adds `migrations/mysql/001_create_agent_store.sql`. Operators
 run it against the selected database before enabling the MySQL driver. It uses
 `CREATE TABLE IF NOT EXISTS`, with indexes declared inside each table definition
 for MySQL 5.7 compatibility; it contains no drop, truncate, or data-migration
@@ -151,7 +151,7 @@ without exposing the DSN or password.
 - `internal/config/config.go`, `internal/config/config_test.go`
 - `cmd/agent-service/main.go`
 - `internal/store/mysql/` (new implementation and tests)
-- `deploy/mysql/001_create_agent_store.sql` (new operator-applied schema)
+- `migrations/mysql/001_create_agent_store.sql` (new operator-applied schema)
 - `config.example.yaml`
 - `README.md`
 

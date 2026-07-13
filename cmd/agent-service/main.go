@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -8,7 +10,9 @@ import (
 	"github.com/dengw8/harness-practice/internal/config"
 	"github.com/dengw8/harness-practice/internal/model"
 	"github.com/dengw8/harness-practice/internal/server"
+	"github.com/dengw8/harness-practice/internal/store"
 	"github.com/dengw8/harness-practice/internal/store/local"
+	mysqlstore "github.com/dengw8/harness-practice/internal/store/mysql"
 	"github.com/dengw8/harness-practice/internal/tools"
 )
 
@@ -50,7 +54,15 @@ func main() {
 		},
 	})
 
-	runStore := local.New(cfg.Storage.LocalDir)
+	runStore, closeStore, err := buildRunStore(context.Background(), cfg)
+	if err != nil {
+		log.Fatalf("build run store: %v", err)
+	}
+	defer func() {
+		if err := closeStore(); err != nil {
+			log.Printf("close run store: %v", err)
+		}
+	}()
 	handler := server.New(server.Config{
 		Runner:        runner,
 		Store:         runStore,
@@ -58,7 +70,29 @@ func main() {
 	})
 	log.Printf("agent service listening on %s", cfg.Server.Addr)
 	if err := http.ListenAndServe(cfg.Server.Addr, handler.Routes()); err != nil {
-		log.Fatalf("serve: %v", err)
+		log.Printf("serve: %v", err)
+	}
+}
+
+func buildRunStore(ctx context.Context, cfg config.Config) (store.RunStore, func() error, error) {
+	switch cfg.Storage.Driver {
+	case "local":
+		return local.New(cfg.Storage.LocalDir), func() error { return nil }, nil
+	case "mysql":
+		runStore, err := mysqlstore.New(ctx, mysqlstore.Config{
+			PSM:      cfg.Storage.MySQL.PSM,
+			Host:     cfg.Storage.MySQL.Host,
+			Port:     cfg.Storage.MySQL.Port,
+			Database: cfg.Storage.MySQL.Database,
+			Username: cfg.Storage.MySQL.Username,
+			Password: cfg.Storage.MySQL.Password,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		return runStore, runStore.Close, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported storage driver %q", cfg.Storage.Driver)
 	}
 }
 
