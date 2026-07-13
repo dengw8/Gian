@@ -1,0 +1,21 @@
+docs/superpowers/specs/2026-07-13-mysql-run-store-design.md
+  s_0e1ff253631997::t_3345e273940b39 1-158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2b688a0144156f739fede8b9162c0d30549c13df",
+  "prompts": {},
+  "sessions": {
+    "s_0e1ff253631997": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5a59-1487-7063-a2e6-40badcd2a586",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
