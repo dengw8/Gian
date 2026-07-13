@@ -7,9 +7,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/dengw8/harness-practice/internal/model"
-	"github.com/dengw8/harness-practice/internal/runtime"
-	"github.com/dengw8/harness-practice/internal/tools"
+	"github.com/dengw8/Gian/internal/model"
+	"github.com/dengw8/Gian/internal/runtime"
+	"github.com/dengw8/Gian/internal/tools"
 )
 
 type PlanModeMiddleware struct {

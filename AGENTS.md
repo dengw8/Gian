@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues for `dengw8/harness-practice`; external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+Issues are tracked in GitHub Issues for `dengw8/Gian`; external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

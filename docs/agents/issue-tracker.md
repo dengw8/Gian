@@ -4,7 +4,7 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 ## Repository
 
-GitHub repository: `dengw8/harness-practice`
+GitHub repository: `dengw8/Gian`
 
 Infer the repo from `git remote -v` when possible. The `gh` CLI does this automatically when run inside this clone.
 

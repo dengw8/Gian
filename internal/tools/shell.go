@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/dengw8/harness-practice/internal/runtime"
+	"github.com/dengw8/Gian/internal/runtime"
 )
 
 type ShellTool struct {

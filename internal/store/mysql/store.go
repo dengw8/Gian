@@ -17,8 +17,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/dengw8/harness-practice/internal/runtime"
-	"github.com/dengw8/harness-practice/internal/store"
+	"github.com/dengw8/Gian/internal/runtime"
+	"github.com/dengw8/Gian/internal/store"
 )
 
 const (

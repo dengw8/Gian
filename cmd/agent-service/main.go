@@ -6,14 +6,14 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/dengw8/harness-practice/internal/agent"
-	"github.com/dengw8/harness-practice/internal/config"
-	"github.com/dengw8/harness-practice/internal/model"
-	"github.com/dengw8/harness-practice/internal/server"
-	"github.com/dengw8/harness-practice/internal/store"
-	"github.com/dengw8/harness-practice/internal/store/local"
-	mysqlstore "github.com/dengw8/harness-practice/internal/store/mysql"
-	"github.com/dengw8/harness-practice/internal/tools"
+	"github.com/dengw8/Gian/internal/agent"
+	"github.com/dengw8/Gian/internal/config"
+	"github.com/dengw8/Gian/internal/model"
+	"github.com/dengw8/Gian/internal/server"
+	"github.com/dengw8/Gian/internal/store"
+	"github.com/dengw8/Gian/internal/store/local"
+	mysqlstore "github.com/dengw8/Gian/internal/store/mysql"
+	"github.com/dengw8/Gian/internal/tools"
 )
 
 func main() {

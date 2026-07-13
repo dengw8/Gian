@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/dengw8/harness-practice/internal/runtime"
+	"github.com/dengw8/Gian/internal/runtime"
 )
 
 func TestOpenAICompatibleProviderMapsTextResponse(t *testing.T) {

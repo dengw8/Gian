@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dengw8/harness-practice/internal/runtime"
+	"github.com/dengw8/Gian/internal/runtime"
 )
 
 var (

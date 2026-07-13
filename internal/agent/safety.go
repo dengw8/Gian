@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 
-	"github.com/dengw8/harness-practice/internal/runtime"
-	"github.com/dengw8/harness-practice/internal/tools"
+	"github.com/dengw8/Gian/internal/runtime"
+	"github.com/dengw8/Gian/internal/tools"
 )
 
 type SafetyMiddleware struct {

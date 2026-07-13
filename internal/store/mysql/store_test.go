@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dengw8/harness-practice/internal/runtime"
-	"github.com/dengw8/harness-practice/internal/store"
-	"github.com/dengw8/harness-practice/internal/store/storetest"
+	"github.com/dengw8/Gian/internal/runtime"
+	"github.com/dengw8/Gian/internal/store"
+	"github.com/dengw8/Gian/internal/store/storetest"
 )
 
 func TestMetadataRoundTrip(t *testing.T) {

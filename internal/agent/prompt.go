@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dengw8/harness-practice/internal/runtime"
+	"github.com/dengw8/Gian/internal/runtime"
 )
 
 const dynamicContextBoundary = "━━━ DYNAMIC CONTEXT BELOW ━━━"
