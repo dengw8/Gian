@@ -1,0 +1,16 @@
+.gitignore
+  h_863ffb53529059 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e73bd290ac1567484df28b192bc6a6a4f869c356",
+  "prompts": {},
+  "humans": {
+    "h_863ffb53529059": {
+      "author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
