@@ -1,0 +1,21 @@
+docs/superpowers/specs/2026-07-15-persistent-shell-approval-design.md
+  s_b92fefb01052f3::t_96a2db6f49d108 1-240
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c413ed4808b574037b7e9bff351d4fd838a881ad",
+  "prompts": {},
+  "sessions": {
+    "s_b92fefb01052f3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f59ad-4907-7022-830c-7e9dbec57e89",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
