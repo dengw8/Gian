@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dengw8/Gian/internal/runtime"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 type ShellTool struct {
@@ -16,6 +17,11 @@ type ShellTool struct {
 
 type ShellInput struct {
 	Command string `json:"command"`
+}
+
+type ShellRiskAnalysis struct {
+	RequiresApproval bool
+	Reasons          []string
 }
 
 func NewShellTool(workspace string) *ShellTool {
@@ -27,7 +33,7 @@ func (t *ShellTool) Name() string {
 }
 
 func (t *ShellTool) Description() string {
-	return "Execute an approved shell command under the configured workspace."
+	return "Execute an approved POSIX shell script under the configured workspace."
 }
 
 func (t *ShellTool) Parameters() map[string]any {
@@ -36,7 +42,7 @@ func (t *ShellTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"command": map[string]any{
 				"type":        "string",
-				"description": "A single approved shell command.",
+				"description": "A complete POSIX shell script. Scripts that are not demonstrably read-only require user approval.",
 			},
 		},
 		"required": []string{"command"},
@@ -90,75 +96,103 @@ func DecodeShellInput(args json.RawMessage) (ShellInput, error) {
 }
 
 func ValidateShellCommand(command string) error {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return fmt.Errorf("shell command is required")
-	}
-	for _, token := range []string{"&&", "||", ";", "|", "`", "$(", "\n", "\r", ">", "<", "&"} {
-		if strings.Contains(command, token) {
-			return fmt.Errorf("shell command rejected: command chaining or shell control operator %q is not allowed", token)
-		}
-	}
-
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return fmt.Errorf("shell command is required")
-	}
-	if isDestructiveCommand(fields[0]) {
-		return fmt.Errorf("shell command rejected: destructive command %q is not allowed", fields[0])
-	}
-	return nil
+	_, err := parseShellScript(command)
+	return err
 }
 
 func ValidateReadOnlyShellCommand(command string) error {
-	if err := ValidateShellCommand(command); err != nil {
+	analysis, err := AnalyzeShellScript(command)
+	if err != nil {
 		return err
 	}
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return fmt.Errorf("shell command is required")
-	}
-	base := fields[0]
-	if idx := strings.LastIndex(base, "/"); idx >= 0 {
-		base = base[idx+1:]
-	}
-	if !isReadOnlyCommand(base, fields[1:]) {
-		return fmt.Errorf("shell command rejected: %q is not allowed in plan mode", base)
+	if analysis.RequiresApproval {
+		return fmt.Errorf("shell script rejected in plan mode: %s", strings.Join(analysis.Reasons, "; "))
 	}
 	return nil
 }
 
-func isDestructiveCommand(command string) bool {
-	base := command
-	if idx := strings.LastIndex(base, "/"); idx >= 0 {
-		base = base[idx+1:]
+func AnalyzeShellScript(command string) (ShellRiskAnalysis, error) {
+	file, err := parseShellScript(command)
+	if err != nil {
+		return ShellRiskAnalysis{}, err
 	}
-	switch base {
-	case "rm", "rmdir", "mv", "chmod", "chown", "sudo", "dd", "mkfs", "shutdown", "reboot", "kill", "pkill":
-		return true
-	default:
-		return false
+	if len(file.Stmts) != 1 {
+		return approvalRequired("multiple shell statements are not provably read-only"), nil
 	}
+	stmt := file.Stmts[0]
+	if stmt.Negated || stmt.Background || stmt.Coprocess || stmt.Semicolon.IsValid() {
+		return approvalRequired("shell control operators are not provably read-only"), nil
+	}
+	if len(stmt.Redirs) > 0 {
+		return approvalRequired("shell redirection requires approval"), nil
+	}
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok {
+		return approvalRequired("compound shell syntax requires approval"), nil
+	}
+	if len(call.Assigns) > 0 {
+		return approvalRequired("shell variable assignment requires approval"), nil
+	}
+	words, ok := literalWords(call.Args)
+	if !ok || len(words) == 0 {
+		return approvalRequired("shell expansion or dynamic command requires approval"), nil
+	}
+	base := commandBase(words[0])
+	if !isReadOnlyCommand(base, words[1:]) {
+		return approvalRequired(fmt.Sprintf("command %q is not provably read-only", base)), nil
+	}
+	return ShellRiskAnalysis{}, nil
+}
+
+func parseShellScript(command string) (*syntax.File, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil, fmt.Errorf("shell command is required")
+	}
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangPOSIX)).Parse(strings.NewReader(command), "")
+	if err != nil {
+		return nil, fmt.Errorf("parse shell script: %w", err)
+	}
+	return file, nil
+}
+
+func approvalRequired(reason string) ShellRiskAnalysis {
+	return ShellRiskAnalysis{RequiresApproval: true, Reasons: []string{reason}}
+}
+
+func literalWords(words []*syntax.Word) ([]string, bool) {
+	values := make([]string, 0, len(words))
+	for _, word := range words {
+		value := word.Lit()
+		if value == "" {
+			return nil, false
+		}
+		values = append(values, value)
+	}
+	return values, true
+}
+
+func commandBase(command string) string {
+	if idx := strings.LastIndex(command, "/"); idx >= 0 {
+		return command[idx+1:]
+	}
+	return command
 }
 
 func isReadOnlyCommand(command string, args []string) bool {
 	switch command {
-	case "cat", "head", "tail", "less", "more", "grep", "find", "ls", "pwd", "echo", "printf", "wc", "sort", "uniq", "diff", "file", "stat", "du", "df", "tree", "which", "whereis", "type", "env", "printenv", "uname", "whoami", "id", "date", "ps", "rg", "fd", "jq":
+	case "cat", "head", "tail", "less", "more", "grep", "ls", "pwd", "echo", "printf", "wc", "uniq", "diff", "file", "stat", "du", "df", "tree", "which", "whereis", "type", "printenv", "uname", "whoami", "id", "date", "ps", "rg", "fd", "jq":
 		return true
-	case "sed":
-		return len(args) > 0 && args[0] == "-n"
 	case "git":
 		if len(args) == 0 {
 			return false
 		}
 		switch args[0] {
-		case "status", "log", "diff", "show", "branch", "remote":
+		case "status", "log", "branch", "remote":
 			return true
 		default:
 			return false
 		}
-	case "go":
-		return len(args) > 0 && args[0] == "test"
 	default:
 		return false
 	}

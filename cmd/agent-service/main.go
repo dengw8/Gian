@@ -43,8 +43,8 @@ func main() {
 		Tools:         registry,
 		Middleware: []agent.Middleware{
 			agent.NoopMiddleware{NameValue: "bootstrap"},
-			agent.SafetyMiddleware{},
 			agent.PlanModeMiddleware{},
+			agent.ShellApprovalMiddleware{Workspace: cfg.Tools.Workspace},
 			agent.CompactionMiddleware{
 				Enabled:     cfg.Agent.CompactionEnabled,
 				MaxMessages: cfg.Agent.CompactionMaxMessages,

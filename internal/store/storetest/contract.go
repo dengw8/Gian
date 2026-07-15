@@ -250,6 +250,68 @@ func RunStoreContract(t *testing.T, newStore Factory) {
 		}
 	})
 
+	t.Run("shell approval", func(t *testing.T) {
+		runStore := newStore(t)
+		meta, err := runStore.CreateRun(context.Background(), store.CreateRunInput{ModelProvider: "fake"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		approval := runtime.PendingShellApproval{
+			ID:          "approval_test",
+			Version:     1,
+			ToolCall:    runtime.ToolCall{ID: "call_1", Name: "shell", Arguments: []byte(`{"command":"touch file.txt"}`)},
+			Workspace:   "/workspace",
+			RiskReasons: []string{"command is not provably read-only"},
+			ScriptHash:  "hash",
+			RequestedAt: time.Now().UTC(),
+			Status:      runtime.ShellApprovalPending,
+		}
+		if err := runStore.SavePendingShellApproval(context.Background(), meta.ID, approval); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := runStore.GetPendingShellApproval(context.Background(), meta.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded.ToolCall.Arguments = approval.ToolCall.Arguments
+		if !reflect.DeepEqual(loaded, &approval) {
+			t.Fatalf("approval = %#v, want %#v", loaded, approval)
+		}
+		if _, err := runStore.ClaimPendingShellApproval(context.Background(), meta.ID, approval.ID, approval.Version); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runStore.ClaimPendingShellApproval(context.Background(), meta.ID, approval.ID, approval.Version); !errors.Is(err, store.ErrApprovalConflict) {
+			t.Fatalf("duplicate claim error = %v, want ErrApprovalConflict", err)
+		}
+		next := approval
+		next.ID = "approval_next"
+		next.Status = runtime.ShellApprovalPending
+		if err := runStore.CompleteShellApproval(context.Background(), meta.ID, approval.ID, &next); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err = runStore.GetPendingShellApproval(context.Background(), meta.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded.ToolCall.Arguments = next.ToolCall.Arguments
+		if !reflect.DeepEqual(loaded, &next) {
+			t.Fatalf("replacement approval = %#v, want %#v", loaded, next)
+		}
+		if _, err := runStore.ClaimPendingShellApproval(context.Background(), meta.ID, next.ID, next.Version); err != nil {
+			t.Fatal(err)
+		}
+		if err := runStore.CompleteShellApproval(context.Background(), meta.ID, next.ID, nil); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err = runStore.GetPendingShellApproval(context.Background(), meta.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded != nil {
+			t.Fatalf("approval = %#v, want nil", loaded)
+		}
+	})
+
 	t.Run("list runs newest updated first", func(t *testing.T) {
 		runStore := newStore(t)
 

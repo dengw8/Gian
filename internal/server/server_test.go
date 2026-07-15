@@ -627,7 +627,7 @@ func TestCreateRunPersistsWorkspaceToolMessages(t *testing.T) {
 	}
 }
 
-func TestCreateRunPersistsRejectedShellToolMessage(t *testing.T) {
+func TestCreateRunPersistsPendingShellApproval(t *testing.T) {
 	workspace := t.TempDir()
 	registry, err := tools.NewRegistry(tools.NewShellTool(workspace))
 	if err != nil {
@@ -639,29 +639,221 @@ func TestCreateRunPersistsRejectedShellToolMessage(t *testing.T) {
 			Model:         model.NewFakeProvider(),
 			MaxIterations: 4,
 			Tools:         registry,
-			Middleware:    []agent.Middleware{agent.SafetyMiddleware{}},
+			Middleware:    []agent.Middleware{agent.ShellApprovalMiddleware{Workspace: workspace}},
 		}),
 		Store:         runStore,
 		ModelProvider: "fake",
 	})
 
 	created := createRunForTest(t, srv, `{"message":"shell:rm file.txt"}`)
-	if len(created.Messages) != 4 {
-		t.Fatalf("response message count = %d, want 4", len(created.Messages))
+	if created.Run.Status != store.RunStatusAwaitingApproval {
+		t.Fatalf("run status = %q, want awaiting approval", created.Run.Status)
 	}
-	if created.Messages[2].Role != "tool" || !strings.Contains(created.Messages[2].Content, "destructive command") {
-		t.Fatalf("tool message = %#v", created.Messages[2])
+	if len(created.Messages) != 2 {
+		t.Fatalf("response message count = %d, want 2", len(created.Messages))
+	}
+	pending, err := runStore.GetPendingShellApproval(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending == nil || pending.ToolCall.Name != "shell" {
+		t.Fatalf("pending approval = %#v", pending)
 	}
 
 	persisted, err := runStore.ListMessages(context.Background(), created.Run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(persisted) != 4 {
-		t.Fatalf("persisted message count = %d, want 4", len(persisted))
+	if len(persisted) != 2 {
+		t.Fatalf("persisted message count = %d, want 2", len(persisted))
 	}
-	if persisted[2].Role != runtime.RoleTool || !strings.Contains(persisted[2].Content, "destructive command") {
-		t.Fatalf("persisted rejected tool message = %#v", persisted[2])
+	if persisted[1].Role != runtime.RoleAssistant || len(persisted[1].ToolCalls) != 1 {
+		t.Fatalf("persisted assistant message = %#v", persisted[1])
+	}
+}
+
+func TestResolveShellApprovalExecutesStoredScriptOnce(t *testing.T) {
+	workspace := t.TempDir()
+	registry, err := tools.NewRegistry(tools.NewShellTool(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runStore := local.New(t.TempDir())
+	srv := New(Config{
+		Runner: agent.NewRunner(agent.Config{
+			Model:         model.NewFakeProvider(),
+			MaxIterations: 4,
+			Tools:         registry,
+			Middleware:    []agent.Middleware{agent.ShellApprovalMiddleware{Workspace: workspace}},
+		}),
+		Store:         runStore,
+		ModelProvider: "fake",
+	})
+	created := createRunForTest(t, srv, `{"message":"shell:touch approved.txt"}`)
+	pending, err := runStore.GetPendingShellApproval(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending == nil {
+		t.Fatal("expected pending approval")
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/runs/"+created.Run.ID+"/approvals/pending", nil)
+	getRec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("pending status = %d, body = %s", getRec.Code, getRec.Body.String())
+	}
+
+	body := bytes.NewBufferString(`{"decision":"approve"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+created.Run.ID+"/approvals/"+pending.ID, body)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "approved.txt")); err != nil {
+		t.Fatalf("approved script did not execute: %v", err)
+	}
+	meta, err := runStore.GetRun(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Status != store.RunStatusCompleted {
+		t.Fatalf("run status = %q, want completed", meta.Status)
+	}
+	if _, err := runStore.GetPendingShellApproval(context.Background(), created.Run.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	retry := httptest.NewRequest(http.MethodPost, "/v1/runs/"+created.Run.ID+"/approvals/"+pending.ID, bytes.NewBufferString(`{"decision":"approve"}`))
+	retryRec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(retryRec, retry)
+	if retryRec.Code != http.StatusConflict {
+		t.Fatalf("retry status = %d, body = %s", retryRec.Code, retryRec.Body.String())
+	}
+}
+
+func TestResolveShellApprovalRejectsReplacementScript(t *testing.T) {
+	workspace := t.TempDir()
+	registry, err := tools.NewRegistry(tools.NewShellTool(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runStore := local.New(t.TempDir())
+	srv := New(Config{
+		Runner: agent.NewRunner(agent.Config{
+			Model:      model.NewFakeProvider(),
+			Tools:      registry,
+			Middleware: []agent.Middleware{agent.ShellApprovalMiddleware{Workspace: workspace}},
+		}),
+		Store:         runStore,
+		ModelProvider: "fake",
+	})
+	created := createRunForTest(t, srv, `{"message":"shell:touch original.txt"}`)
+	pending, err := runStore.GetPendingShellApproval(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+created.Run.ID+"/approvals/"+pending.ID, bytes.NewBufferString(`{"decision":"approve","command":"touch replaced.txt"}`))
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "original.txt")); !os.IsNotExist(err) {
+		t.Fatalf("original script executed before approval: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "replaced.txt")); !os.IsNotExist(err) {
+		t.Fatalf("replacement script executed: %v", err)
+	}
+}
+
+func TestResolveShellApprovalDenyResumesWithoutExecution(t *testing.T) {
+	workspace := t.TempDir()
+	registry, err := tools.NewRegistry(tools.NewShellTool(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runStore := local.New(t.TempDir())
+	srv := New(Config{
+		Runner: agent.NewRunner(agent.Config{
+			Model:      model.NewFakeProvider(),
+			Tools:      registry,
+			Middleware: []agent.Middleware{agent.ShellApprovalMiddleware{Workspace: workspace}},
+		}),
+		Store:         runStore,
+		ModelProvider: "fake",
+	})
+	created := createRunForTest(t, srv, `{"message":"shell:touch denied.txt"}`)
+	pending, err := runStore.GetPendingShellApproval(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+created.Run.ID+"/approvals/"+pending.ID, bytes.NewBufferString(`{"decision":"deny"}`))
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "denied.txt")); !os.IsNotExist(err) {
+		t.Fatalf("denied script executed: %v", err)
+	}
+	messages, err := runStore.ListMessages(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) < 3 || messages[2].Role != runtime.RoleTool || !strings.Contains(messages[2].Content, "denied by user") {
+		t.Fatalf("resolved messages = %#v", messages)
+	}
+	meta, err := runStore.GetRun(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Status != store.RunStatusCompleted {
+		t.Fatalf("status = %q, want completed", meta.Status)
+	}
+}
+
+func TestGetPendingApprovalMarksInterruptedExecutionFailed(t *testing.T) {
+	workspace := t.TempDir()
+	registry, err := tools.NewRegistry(tools.NewShellTool(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runStore := local.New(t.TempDir())
+	srv := New(Config{
+		Runner: agent.NewRunner(agent.Config{
+			Model:      model.NewFakeProvider(),
+			Tools:      registry,
+			Middleware: []agent.Middleware{agent.ShellApprovalMiddleware{Workspace: workspace}},
+		}),
+		Store:         runStore,
+		ModelProvider: "fake",
+	})
+	created := createRunForTest(t, srv, `{"message":"shell:touch interrupted.txt"}`)
+	pending, err := runStore.GetPendingShellApproval(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runStore.ClaimPendingShellApproval(context.Background(), created.Run.ID, pending.ID, pending.Version); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs/"+created.Run.ID+"/approvals/pending", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "interrupted.txt")); !os.IsNotExist(err) {
+		t.Fatalf("interrupted script was retried: %v", err)
+	}
+	meta, err := runStore.GetRun(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Status != store.RunStatusFailed || !strings.Contains(meta.Error, "manual recovery") {
+		t.Fatalf("run metadata = %#v", meta)
 	}
 }
 

@@ -340,7 +340,7 @@ func TestRunnerAdvertisesToolsToModel(t *testing.T) {
 	}
 }
 
-func TestSafetyMiddlewareRejectsShellBeforeExecution(t *testing.T) {
+func TestShellApprovalMiddlewarePausesBeforeExecution(t *testing.T) {
 	shell := &recordingShellTool{}
 	registry, err := tools.NewRegistry(shell)
 	if err != nil {
@@ -350,7 +350,7 @@ func TestSafetyMiddlewareRejectsShellBeforeExecution(t *testing.T) {
 		Model:         model.NewFakeProvider(),
 		MaxIterations: 4,
 		Tools:         registry,
-		Middleware:    []Middleware{SafetyMiddleware{}},
+		Middleware:    []Middleware{ShellApprovalMiddleware{}},
 	})
 
 	out, err := runner.RunTurn(context.Background(), TurnInput{Message: "shell:rm file.txt"})
@@ -359,19 +359,18 @@ func TestSafetyMiddlewareRejectsShellBeforeExecution(t *testing.T) {
 	}
 
 	if shell.executed {
-		t.Fatal("expected safety middleware to reject before tool execution")
+		t.Fatal("expected approval middleware to pause before tool execution")
 	}
-	if len(out.NewMessages) != 4 {
-		t.Fatalf("new message count = %d, want 4", len(out.NewMessages))
+	if out.PendingApproval == nil {
+		t.Fatal("expected pending approval")
+	}
+	if out.PendingApproval.ToolCall.Name != "shell" {
+		t.Fatalf("pending tool = %#v", out.PendingApproval.ToolCall)
+	}
+	if len(out.NewMessages) != 2 {
+		t.Fatalf("new message count = %d, want 2", len(out.NewMessages))
 	}
 	assertMessagesHaveTimes(t, out.NewMessages)
-	toolMessage := out.NewMessages[2]
-	if toolMessage.Role != runtime.RoleTool {
-		t.Fatalf("tool message role = %q", toolMessage.Role)
-	}
-	if !strings.Contains(toolMessage.Content, "destructive command") {
-		t.Fatalf("tool message content = %q, want rejection", toolMessage.Content)
-	}
 }
 
 func TestRunnerPlanModeExtractsPlanAndFiltersTools(t *testing.T) {

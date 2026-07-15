@@ -2,18 +2,22 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/dengw8/Gian/internal/runtime"
 )
 
+var ErrApprovalConflict = errors.New("shell approval conflict")
+
 type RunStatus string
 
 const (
-	RunStatusCreated   RunStatus = "created"
-	RunStatusRunning   RunStatus = "running"
-	RunStatusCompleted RunStatus = "completed"
-	RunStatusFailed    RunStatus = "failed"
+	RunStatusCreated          RunStatus = "created"
+	RunStatusRunning          RunStatus = "running"
+	RunStatusAwaitingApproval RunStatus = "awaiting_approval"
+	RunStatusCompleted        RunStatus = "completed"
+	RunStatusFailed           RunStatus = "failed"
 )
 
 type RunMetadata struct {
@@ -48,6 +52,11 @@ type RunStore interface {
 	SavePlan(ctx context.Context, runID string, plan runtime.PlanState) (RunMetadata, error)
 	GetCompaction(ctx context.Context, runID string) (runtime.CompactionState, error)
 	SaveCompaction(ctx context.Context, runID string, state runtime.CompactionState) error
+	GetPendingShellApproval(ctx context.Context, runID string) (*runtime.PendingShellApproval, error)
+	SavePendingShellApproval(ctx context.Context, runID string, approval runtime.PendingShellApproval) error
+	ClaimPendingShellApproval(ctx context.Context, runID, approvalID string, version int) (runtime.PendingShellApproval, error)
+	ClearPendingShellApproval(ctx context.Context, runID, approvalID string) error
+	CompleteShellApproval(ctx context.Context, runID, executingApprovalID string, next *runtime.PendingShellApproval) error
 	AppendMessages(ctx context.Context, runID string, messages []runtime.Message) error
 	ListMessages(ctx context.Context, runID string) ([]runtime.Message, error)
 	AppendEvents(ctx context.Context, runID string, events []runtime.Event) error

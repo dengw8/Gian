@@ -2,10 +2,13 @@ package server
 
 import (
 	"bufio"
+	"context"
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -14,6 +17,7 @@ import (
 	"github.com/dengw8/Gian/internal/agent"
 	"github.com/dengw8/Gian/internal/runtime"
 	"github.com/dengw8/Gian/internal/store"
+	"github.com/dengw8/Gian/internal/tools"
 )
 
 //go:embed web/*
@@ -44,6 +48,14 @@ type appendTurnRequest struct {
 
 type setPlanModeRequest struct {
 	Enabled bool `json:"enabled"`
+}
+
+type approvalDecisionRequest struct {
+	Decision runtime.ShellApprovalDecision `json:"decision"`
+}
+
+type pendingApprovalResponse struct {
+	Approval runtime.PendingShellApproval `json:"approval"`
 }
 
 type createRunResponse struct {
@@ -104,6 +116,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/runs/{runID}/events", s.handleListEvents)
 	mux.HandleFunc("GET /v1/runs/{runID}/model-logs", s.handleListModelLogs)
 	mux.HandleFunc("GET /v1/runs/{runID}/plan", s.handleGetPlan)
+	mux.HandleFunc("GET /v1/runs/{runID}/approvals/pending", s.handleGetPendingApproval)
+	mux.HandleFunc("POST /v1/runs/{runID}/approvals/{approvalID}", s.handleResolveApproval)
 	mux.HandleFunc("POST /v1/runs/{runID}/plan-mode", s.handleSetPlanMode)
 	mux.HandleFunc("POST /v1/runs/{runID}/plan/execute", s.handleExecutePlan)
 	mux.HandleFunc("POST /v1/runs/{runID}/plan/reset", s.handleResetPlan)
@@ -197,8 +211,8 @@ func (s *Server) handleAppendTurn(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if meta.Status == store.RunStatusRunning {
-		writeJSON(w, http.StatusConflict, errorResponse{Error: "run is already running"})
+	if err := rejectUnavailableRun(meta); err != nil {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
 		return
 	}
 
@@ -260,8 +274,8 @@ func (s *Server) handleAppendTurnStream(w http.ResponseWriter, r *http.Request) 
 		stream.write(runtime.NewEvent("turn_failed", err.Error()))
 		return
 	}
-	if meta.Status == store.RunStatusRunning {
-		stream.write(runtime.NewEvent("turn_failed", "run is already running"))
+	if err := rejectUnavailableRun(meta); err != nil {
+		stream.write(runtime.NewEvent("turn_failed", err.Error()))
 		return
 	}
 
@@ -359,6 +373,16 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 			return agent.TurnOutput{}, meta, err
 		}
 	}
+	if out.PendingApproval != nil {
+		if err := s.store.SavePendingShellApproval(r.Context(), meta.ID, *out.PendingApproval); err != nil {
+			return agent.TurnOutput{}, meta, err
+		}
+		meta, err = s.store.UpdateRun(r.Context(), meta.ID, store.UpdateRunInput{Status: store.RunStatusAwaitingApproval})
+		if err != nil {
+			return agent.TurnOutput{}, meta, err
+		}
+		return out, meta, nil
+	}
 	if err := s.emitAndPersist(r, meta.ID, runtime.NewEvent("turn_completed", "Turn completed"), sink); err != nil {
 		return agent.TurnOutput{}, meta, err
 	}
@@ -430,6 +454,216 @@ func (s *Server) emitAndPersist(r *http.Request, runID string, event runtime.Eve
 	return s.store.AppendEvents(r.Context(), runID, []runtime.Event{event})
 }
 
+func (s *Server) handleGetPendingApproval(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("runID")
+	if _, err := s.store.GetRun(r.Context(), runID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	approval, err := s.store.GetPendingShellApproval(r.Context(), runID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if approval == nil {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "no pending shell approval"})
+		return
+	}
+	if approval.Status == runtime.ShellApprovalExecuting {
+		s.markExecutingApprovalFailed(r.Context(), runID, approval.ID)
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "shell approval execution was interrupted; manual recovery is required"})
+		return
+	}
+	writeJSON(w, http.StatusOK, pendingApprovalResponse{Approval: *approval})
+}
+
+func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("runID")
+	meta, err := s.store.GetRun(r.Context(), runID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if meta.Status != store.RunStatusAwaitingApproval {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "run is not awaiting shell approval"})
+		return
+	}
+	var req approvalDecisionRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid approval request body"})
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid approval request body"})
+		return
+	}
+	if req.Decision != runtime.ShellApprovalApprove && req.Decision != runtime.ShellApprovalDeny && req.Decision != runtime.ShellApprovalCancel {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "decision must be approve, deny, or cancel"})
+		return
+	}
+	approval, err := s.store.GetPendingShellApproval(r.Context(), runID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if approval == nil || approval.ID != r.PathValue("approvalID") || approval.Status != runtime.ShellApprovalPending {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "shell approval is no longer pending"})
+		return
+	}
+	claimed, err := s.store.ClaimPendingShellApproval(r.Context(), runID, approval.ID, approval.Version)
+	if err != nil {
+		writeApprovalError(w, err)
+		return
+	}
+	if err := verifyStoredShellApproval(claimed); err != nil {
+		s.markExecutingApprovalFailed(r.Context(), runID, claimed.ID)
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
+		return
+	}
+	meta, err = s.store.UpdateRun(r.Context(), runID, store.UpdateRunInput{Status: store.RunStatusRunning})
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	history, err := s.store.ListMessages(r.Context(), runID)
+	if err != nil {
+		s.failResumedTurn(r.Context(), runID, err)
+		writeStoreError(w, err)
+		return
+	}
+	plan, err := s.store.GetPlan(r.Context(), runID)
+	if err != nil {
+		s.failResumedTurn(r.Context(), runID, err)
+		writeStoreError(w, err)
+		return
+	}
+	compaction, err := s.store.GetCompaction(r.Context(), runID)
+	if err != nil {
+		s.failResumedTurn(r.Context(), runID, err)
+		writeStoreError(w, err)
+		return
+	}
+	out, err := s.runner.ResumeTurn(r.Context(), agent.ResumeInput{
+		History:    history,
+		Plan:       plan,
+		Compaction: compaction,
+		Approval:   claimed,
+		Decision:   req.Decision,
+		Events: func(event runtime.Event) error {
+			return s.emitAndPersist(r, runID, event, nil)
+		},
+	})
+	if err != nil {
+		if len(out.NewMessages) > 0 {
+			_ = s.store.AppendMessages(r.Context(), runID, out.NewMessages)
+		}
+		if len(out.ModelLogs) > 0 {
+			_ = s.appendModelLogs(r, runID, out.ModelLogs)
+		}
+		s.failResumedTurn(r.Context(), runID, err)
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		return
+	}
+	if err := s.persistResumedOutput(r, runID, meta, claimed, out); err != nil {
+		s.failResumedTurn(r.Context(), runID, err)
+		writeStoreError(w, err)
+		return
+	}
+	updated, err := s.store.GetRun(r.Context(), runID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, appendTurnResponse{
+		Run:         updated,
+		Messages:    toMessageOutput(out.Messages),
+		NewMessages: toMessageOutput(out.NewMessages),
+		Plan:        out.Plan,
+	})
+}
+
+func (s *Server) persistResumedOutput(r *http.Request, runID string, meta store.RunMetadata, claimed runtime.PendingShellApproval, out agent.TurnOutput) error {
+	if err := s.store.AppendMessages(r.Context(), runID, out.NewMessages); err != nil {
+		return err
+	}
+	if err := s.appendModelLogs(r, runID, out.ModelLogs); err != nil {
+		return err
+	}
+	if usage := totalUsage(out.Events); usage != nil {
+		if _, err := s.store.UpdateRun(r.Context(), runID, store.UpdateRunInput{Status: meta.Status, AddUsage: usage}); err != nil {
+			return err
+		}
+	}
+	if _, err := s.store.SavePlan(r.Context(), runID, out.Plan); err != nil {
+		return err
+	}
+	if out.Compaction.Enabled {
+		if err := s.store.SaveCompaction(r.Context(), runID, out.Compaction); err != nil {
+			return err
+		}
+	}
+	if err := s.store.CompleteShellApproval(r.Context(), runID, claimed.ID, out.PendingApproval); err != nil {
+		return err
+	}
+	if out.PendingApproval != nil {
+		_, err := s.store.UpdateRun(r.Context(), runID, store.UpdateRunInput{Status: store.RunStatusAwaitingApproval})
+		return err
+	}
+	if err := s.store.AppendEvents(r.Context(), runID, []runtime.Event{runtime.NewEvent("turn_completed", "Turn completed")}); err != nil {
+		return err
+	}
+	_, err := s.store.UpdateRun(r.Context(), runID, store.UpdateRunInput{Status: store.RunStatusCompleted})
+	return err
+}
+
+func verifyStoredShellApproval(approval runtime.PendingShellApproval) error {
+	input, err := tools.DecodeShellInput(approval.ToolCall.Arguments)
+	if err != nil {
+		return fmt.Errorf("stored shell approval is invalid: %w", err)
+	}
+	hash := sha256.Sum256([]byte(input.Command))
+	if fmt.Sprintf("%x", hash) != approval.ScriptHash {
+		return errors.New("stored shell approval script hash does not match")
+	}
+	if _, err := tools.AnalyzeShellScript(input.Command); err != nil {
+		return fmt.Errorf("stored shell approval is no longer valid: %w", err)
+	}
+	return nil
+}
+
+func (s *Server) markExecutingApprovalFailed(ctx context.Context, runID, approvalID string) {
+	message := "shell approval execution was interrupted; manual recovery is required"
+	_, _ = s.store.UpdateRun(ctx, runID, store.UpdateRunInput{Status: store.RunStatusFailed, Error: message})
+	_ = s.store.AppendEvents(ctx, runID, []runtime.Event{runtime.NewEvent("approval_recovery_required", message)})
+	_ = s.store.ClearPendingShellApproval(ctx, runID, approvalID)
+}
+
+func (s *Server) failResumedTurn(ctx context.Context, runID string, cause error) {
+	_, _ = s.store.UpdateRun(ctx, runID, store.UpdateRunInput{Status: store.RunStatusFailed, Error: cause.Error()})
+	_ = s.store.AppendEvents(ctx, runID, []runtime.Event{runtime.NewEvent("turn_failed", cause.Error())})
+}
+
+func rejectUnavailableRun(meta store.RunMetadata) error {
+	switch meta.Status {
+	case store.RunStatusRunning:
+		return errors.New("run is already running")
+	case store.RunStatusAwaitingApproval:
+		return errors.New("run is awaiting shell approval")
+	default:
+		return nil
+	}
+}
+
+func writeApprovalError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrApprovalConflict) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "shell approval is no longer pending"})
+		return
+	}
+	writeStoreError(w, err)
+}
+
 func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	meta, err := s.store.GetRun(r.Context(), r.PathValue("runID"))
 	if err != nil {
@@ -477,6 +711,13 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSetPlanMode(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("runID")
+	if meta, err := s.store.GetRun(r.Context(), runID); err != nil {
+		writeStoreError(w, err)
+		return
+	} else if err := rejectUnavailableRun(meta); err != nil {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
+		return
+	}
 	var req setPlanModeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid JSON request body"})
@@ -515,6 +756,13 @@ func (s *Server) handleSetPlanMode(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleExecutePlan(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("runID")
+	if meta, err := s.store.GetRun(r.Context(), runID); err != nil {
+		writeStoreError(w, err)
+		return
+	} else if err := rejectUnavailableRun(meta); err != nil {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
+		return
+	}
 	plan, err := s.store.GetPlan(r.Context(), runID)
 	if err != nil {
 		writeStoreError(w, err)
@@ -542,6 +790,13 @@ func (s *Server) handleExecutePlan(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleResetPlan(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("runID")
+	if meta, err := s.store.GetRun(r.Context(), runID); err != nil {
+		writeStoreError(w, err)
+		return
+	} else if err := rejectUnavailableRun(meta); err != nil {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
+		return
+	}
 	meta, err := s.store.SavePlan(r.Context(), runID, runtime.EmptyPlanState())
 	if err != nil {
 		writeStoreError(w, err)

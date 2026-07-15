@@ -351,6 +351,172 @@ func (s *Store) SaveCompaction(ctx context.Context, runID string, state runtime.
 	})
 }
 
+func (s *Store) GetPendingShellApproval(ctx context.Context, runID string) (*runtime.PendingShellApproval, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateRunID(runID); err != nil {
+		return nil, err
+	}
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return nil, err
+	}
+	state, err := s.findState(ctx, runID)
+	if errors.Is(err, gorm.ErrRecordNotFound) || state.PendingApprovalPayload == nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var approval runtime.PendingShellApproval
+	if err := json.Unmarshal([]byte(*state.PendingApprovalPayload), &approval); err != nil {
+		return nil, err
+	}
+	return &approval, nil
+}
+
+func (s *Store) SavePendingShellApproval(ctx context.Context, runID string, approval runtime.PendingShellApproval) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateRunID(runID); err != nil {
+		return err
+	}
+	if approval.Status != runtime.ShellApprovalPending {
+		return fmt.Errorf("new shell approval must be pending")
+	}
+	payload, err := marshalValue(approval)
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockRun(tx, runID); err != nil {
+			return err
+		}
+		state, err := findStateForUpdate(tx, runID)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err == nil && state.PendingApprovalPayload != nil {
+			return store.ErrApprovalConflict
+		}
+		return upsertPendingApproval(tx, runID, &payload)
+	})
+}
+
+func (s *Store) ClaimPendingShellApproval(ctx context.Context, runID, approvalID string, version int) (runtime.PendingShellApproval, error) {
+	if err := ctx.Err(); err != nil {
+		return runtime.PendingShellApproval{}, err
+	}
+	if err := validateRunID(runID); err != nil {
+		return runtime.PendingShellApproval{}, err
+	}
+	var claimed runtime.PendingShellApproval
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockRun(tx, runID); err != nil {
+			return err
+		}
+		state, err := findStateForUpdate(tx, runID)
+		if errors.Is(err, gorm.ErrRecordNotFound) || state.PendingApprovalPayload == nil {
+			return store.ErrApprovalConflict
+		}
+		if err != nil {
+			return err
+		}
+		var approval runtime.PendingShellApproval
+		if err := json.Unmarshal([]byte(*state.PendingApprovalPayload), &approval); err != nil {
+			return err
+		}
+		if approval.ID != approvalID || approval.Version != version || approval.Status != runtime.ShellApprovalPending {
+			return store.ErrApprovalConflict
+		}
+		approval.Status = runtime.ShellApprovalExecuting
+		approval.Version++
+		payload, err := marshalValue(approval)
+		if err != nil {
+			return err
+		}
+		if err := upsertPendingApproval(tx, runID, &payload); err != nil {
+			return err
+		}
+		claimed = approval
+		return nil
+	})
+	if err != nil {
+		return runtime.PendingShellApproval{}, err
+	}
+	return claimed, nil
+}
+
+func (s *Store) ClearPendingShellApproval(ctx context.Context, runID, approvalID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateRunID(runID); err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockRun(tx, runID); err != nil {
+			return err
+		}
+		state, err := findStateForUpdate(tx, runID)
+		if errors.Is(err, gorm.ErrRecordNotFound) || state.PendingApprovalPayload == nil {
+			return store.ErrApprovalConflict
+		}
+		if err != nil {
+			return err
+		}
+		var approval runtime.PendingShellApproval
+		if err := json.Unmarshal([]byte(*state.PendingApprovalPayload), &approval); err != nil {
+			return err
+		}
+		if approval.ID != approvalID {
+			return store.ErrApprovalConflict
+		}
+		return upsertPendingApproval(tx, runID, nil)
+	})
+}
+
+func (s *Store) CompleteShellApproval(ctx context.Context, runID, executingApprovalID string, next *runtime.PendingShellApproval) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateRunID(runID); err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockRun(tx, runID); err != nil {
+			return err
+		}
+		state, err := findStateForUpdate(tx, runID)
+		if errors.Is(err, gorm.ErrRecordNotFound) || state.PendingApprovalPayload == nil {
+			return store.ErrApprovalConflict
+		}
+		if err != nil {
+			return err
+		}
+		var approval runtime.PendingShellApproval
+		if err := json.Unmarshal([]byte(*state.PendingApprovalPayload), &approval); err != nil {
+			return err
+		}
+		if approval.ID != executingApprovalID || approval.Status != runtime.ShellApprovalExecuting {
+			return store.ErrApprovalConflict
+		}
+		var payload *string
+		if next != nil {
+			if next.Status != runtime.ShellApprovalPending {
+				return fmt.Errorf("replacement shell approval must be pending")
+			}
+			encoded, err := marshalValue(*next)
+			if err != nil {
+				return err
+			}
+			payload = &encoded
+		}
+		return upsertPendingApproval(tx, runID, payload)
+	})
+}
+
 func (s *Store) AppendMessages(ctx context.Context, runID string, messages []runtime.Message) error {
 	if err := s.requireRun(ctx, runID); err != nil {
 		return err
@@ -500,6 +666,12 @@ func (s *Store) findState(ctx context.Context, runID string) (stateRecord, error
 	return state, err
 }
 
+func findStateForUpdate(tx *gorm.DB, runID string) (stateRecord, error) {
+	var state stateRecord
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&state, "run_id = ?", runID).Error
+	return state, err
+}
+
 func lockRun(tx *gorm.DB, runID string) (runRecord, error) {
 	var record runRecord
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&record, "id = ?", runID).Error
@@ -521,6 +693,13 @@ func upsertCompaction(tx *gorm.DB, runID string, payload string) error {
 		Columns:   []clause.Column{{Name: "run_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"compaction_payload"}),
 	}).Create(&stateRecord{RunID: runID, CompactionPayload: &payload}).Error
+}
+
+func upsertPendingApproval(tx *gorm.DB, runID string, payload *string) error {
+	return tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "run_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"pending_approval_payload"}),
+	}).Create(&stateRecord{RunID: runID, PendingApprovalPayload: payload}).Error
 }
 
 func runRecordFromMetadata(meta store.RunMetadata) (runRecord, error) {

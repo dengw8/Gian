@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dengw8/Gian/internal/runtime"
@@ -22,6 +23,7 @@ const runsDir = "runs"
 
 type Store struct {
 	root string
+	mu   sync.Mutex
 }
 
 func New(root string) *Store {
@@ -255,6 +257,136 @@ func (s *Store) SaveCompaction(ctx context.Context, runID string, state runtime.
 	return s.writeCompaction(runID, state)
 }
 
+func (s *Store) GetPendingShellApproval(ctx context.Context, runID string) (*runtime.PendingShellApproval, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateRunID(runID); err != nil {
+		return nil, err
+	}
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(s.pendingApprovalPath(runID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var approval runtime.PendingShellApproval
+	if err := json.Unmarshal(data, &approval); err != nil {
+		return nil, err
+	}
+	return &approval, nil
+}
+
+func (s *Store) SavePendingShellApproval(ctx context.Context, runID string, approval runtime.PendingShellApproval) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateRunID(runID); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return err
+	}
+	if existing, err := s.readPendingShellApproval(runID); err != nil {
+		return err
+	} else if existing != nil {
+		return store.ErrApprovalConflict
+	}
+	if approval.Status != runtime.ShellApprovalPending {
+		return fmt.Errorf("new shell approval must be pending")
+	}
+	return s.writePendingShellApproval(runID, approval)
+}
+
+func (s *Store) ClaimPendingShellApproval(ctx context.Context, runID, approvalID string, version int) (runtime.PendingShellApproval, error) {
+	if err := ctx.Err(); err != nil {
+		return runtime.PendingShellApproval{}, err
+	}
+	if err := validateRunID(runID); err != nil {
+		return runtime.PendingShellApproval{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return runtime.PendingShellApproval{}, err
+	}
+	approval, err := s.readPendingShellApproval(runID)
+	if err != nil {
+		return runtime.PendingShellApproval{}, err
+	}
+	if approval == nil || approval.ID != approvalID || approval.Version != version || approval.Status != runtime.ShellApprovalPending {
+		return runtime.PendingShellApproval{}, store.ErrApprovalConflict
+	}
+	approval.Status = runtime.ShellApprovalExecuting
+	approval.Version++
+	if err := s.writePendingShellApproval(runID, *approval); err != nil {
+		return runtime.PendingShellApproval{}, err
+	}
+	return *approval, nil
+}
+
+func (s *Store) ClearPendingShellApproval(ctx context.Context, runID, approvalID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateRunID(runID); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return err
+	}
+	approval, err := s.readPendingShellApproval(runID)
+	if err != nil {
+		return err
+	}
+	if approval == nil || approval.ID != approvalID {
+		return store.ErrApprovalConflict
+	}
+	if err := os.Remove(s.pendingApprovalPath(runID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) CompleteShellApproval(ctx context.Context, runID, executingApprovalID string, next *runtime.PendingShellApproval) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateRunID(runID); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return err
+	}
+	approval, err := s.readPendingShellApproval(runID)
+	if err != nil {
+		return err
+	}
+	if approval == nil || approval.ID != executingApprovalID || approval.Status != runtime.ShellApprovalExecuting {
+		return store.ErrApprovalConflict
+	}
+	if next != nil {
+		if next.Status != runtime.ShellApprovalPending {
+			return fmt.Errorf("replacement shell approval must be pending")
+		}
+		return s.writePendingShellApproval(runID, *next)
+	}
+	if err := os.Remove(s.pendingApprovalPath(runID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) AppendMessages(ctx context.Context, runID string, messages []runtime.Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -361,6 +493,10 @@ func (s *Store) compactionPath(runID string) string {
 	return filepath.Join(s.runDir(runID), "compaction.json")
 }
 
+func (s *Store) pendingApprovalPath(runID string) string {
+	return filepath.Join(s.runDir(runID), "pending_approval.json")
+}
+
 func (s *Store) writeMetadata(meta store.RunMetadata) error {
 	if err := os.MkdirAll(s.runDir(meta.ID), 0o755); err != nil {
 		return err
@@ -395,6 +531,46 @@ func (s *Store) writeCompaction(runID string, state runtime.CompactionState) err
 	}
 	data = append(data, '\n')
 	return os.WriteFile(s.compactionPath(runID), data, 0o644)
+}
+
+func (s *Store) readPendingShellApproval(runID string) (*runtime.PendingShellApproval, error) {
+	data, err := os.ReadFile(s.pendingApprovalPath(runID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var approval runtime.PendingShellApproval
+	if err := json.Unmarshal(data, &approval); err != nil {
+		return nil, err
+	}
+	return &approval, nil
+}
+
+func (s *Store) writePendingShellApproval(runID string, approval runtime.PendingShellApproval) error {
+	if err := os.MkdirAll(s.runDir(runID), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(approval, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	temp, err := os.CreateTemp(s.runDir(runID), "pending_approval-*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, s.pendingApprovalPath(runID))
 }
 
 func appendJSONLines[T any](path string, values []T) error {

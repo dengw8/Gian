@@ -129,6 +129,16 @@
                 >
                   Events
                 </button>
+                <button
+                  class="inspector-tab"
+                  type="button"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="approvalPanel"
+                  data-inspector-target="approvalPanel"
+                >
+                  Approval
+                </button>
               </div>
             </div>
 
@@ -163,6 +173,20 @@
                 </div>
                 <div id="eventStream" class="event-stream empty-state">
                   Persisted and streamed events appear here.
+                </div>
+              </div>
+
+              <div id="approvalPanel" class="approval-panel inspector-view" role="tabpanel" hidden>
+                <div class="panel-toolbar">
+                  <h2>Shell approval</h2>
+                  <div class="button-row">
+                    <button id="approveShellButton" class="success-button" type="button">Approve</button>
+                    <button id="denyShellButton" type="button">Deny</button>
+                    <button id="cancelShellButton" type="button">Cancel</button>
+                  </div>
+                </div>
+                <div id="approvalView" class="approval-view empty-state">
+                  No shell approval is pending.
                 </div>
               </div>
             </div>

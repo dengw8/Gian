@@ -6,6 +6,7 @@ const state = {
   runs: [],
   events: [],
   modelLogs: [],
+	  pendingApproval: null,
   plan: { mode: "off", steps: [] },
   attachments: [],
   activeInspector: "planPanel",
@@ -14,6 +15,10 @@ const state = {
 
 const el = {
   attachmentPreview: document.querySelector("#attachmentPreview"),
+	  approvalView: document.querySelector("#approvalView"),
+	  approveShellButton: document.querySelector("#approveShellButton"),
+	  denyShellButton: document.querySelector("#denyShellButton"),
+	  cancelShellButton: document.querySelector("#cancelShellButton"),
   copyRunButton: document.querySelector("#copyRunButton"),
   currentRunId: document.querySelector("#currentRunId"),
   eventStream: document.querySelector("#eventStream"),
@@ -69,6 +74,9 @@ function bindEvents() {
   el.planModeToggle.addEventListener("change", () => setPlanMode(el.planModeToggle.checked));
   el.executePlanButton.addEventListener("click", executePlan);
   el.resetPlanButton.addEventListener("click", resetPlan);
+	  el.approveShellButton.addEventListener("click", () => resolveShellApproval("approve"));
+	  el.denyShellButton.addEventListener("click", () => resolveShellApproval("deny"));
+	  el.cancelShellButton.addEventListener("click", () => resolveShellApproval("cancel"));
   el.sendButton.addEventListener("click", () => submitTurn(false));
   el.streamButton.addEventListener("click", () => submitTurn(true));
   el.inspectorTabs.forEach((tab, index) => {
@@ -141,7 +149,9 @@ async function requestJSON(path, options = {}) {
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    throw new Error(data?.error || `${response.status} ${response.statusText}`);
+	    const error = new Error(data?.error || `${response.status} ${response.statusText}`);
+	    error.status = response.status;
+	    throw error;
   }
   return data;
 }
@@ -167,7 +177,7 @@ async function createEmptyRun() {
     state.modelLogs = [];
     renderMessages(data.messages || []);
     renderModelLogs();
-    await Promise.all([refreshEvents(), loadRunHistory()]);
+	    await Promise.all([refreshEvents(), refreshApproval(), loadRunHistory()]);
     toast("Run created");
   });
 }
@@ -187,7 +197,7 @@ async function loadRun(runId) {
       method: "GET",
     });
     selectRun(run);
-    await Promise.all([refreshMessages(), refreshEvents(), refreshModelLogs(), refreshPlan(), loadRunHistory()]);
+	    await Promise.all([refreshMessages(), refreshEvents(), refreshModelLogs(), refreshPlan(), refreshApproval(), loadRunHistory()]);
   });
 }
 
@@ -262,6 +272,47 @@ async function refreshPlan() {
     method: "GET",
   });
   selectPlan(plan);
+}
+
+async function refreshApproval() {
+	  if (!state.currentRunId) {
+	    state.pendingApproval = null;
+	    renderApproval();
+	    return;
+	  }
+	  try {
+	    const data = await requestJSON(`/v1/runs/${encodeURIComponent(state.currentRunId)}/approvals/pending`, {
+	      method: "GET",
+	    });
+	    state.pendingApproval = data.approval || null;
+	  } catch (error) {
+	    if (error.status === 404) {
+	      state.pendingApproval = null;
+	    } else {
+	      state.pendingApproval = null;
+	      toast(`Approval load failed: ${error.message}`);
+	    }
+	  }
+	  renderApproval();
+}
+
+async function resolveShellApproval(decision) {
+	  const approval = state.pendingApproval;
+	  if (!state.currentRunId || !approval) {
+	    toast("No shell approval is pending");
+	    return;
+	  }
+	  await withBusy(async () => {
+	    const data = await requestJSON(
+	      `/v1/runs/${encodeURIComponent(state.currentRunId)}/approvals/${encodeURIComponent(approval.id)}`,
+	      { method: "POST", body: JSON.stringify({ decision }) },
+	    );
+	    selectRun(data.run);
+	    selectPlan(data.plan);
+	    state.pendingApproval = null;
+	    await Promise.all([refreshMessages(), refreshEvents(), refreshModelLogs(), refreshApproval(), loadRunHistory()]);
+	    toast(`Shell approval ${decision}d`);
+	  });
 }
 
 async function setPlanMode(enabled) {
@@ -481,8 +532,9 @@ function renderPlan() {
   const steps = plan.steps || [];
   el.planView.classList.remove("empty-state");
   el.planView.textContent = "";
-  el.executePlanButton.disabled = state.busy || !state.currentRunId || steps.length === 0 || plan.mode === "executing";
-  el.resetPlanButton.disabled = state.busy || !state.currentRunId || (plan.mode === "off" && steps.length === 0);
+	const awaitingApproval = Boolean(state.pendingApproval);
+	el.executePlanButton.disabled = state.busy || awaitingApproval || !state.currentRunId || steps.length === 0 || plan.mode === "executing";
+	el.resetPlanButton.disabled = state.busy || awaitingApproval || !state.currentRunId || (plan.mode === "off" && steps.length === 0);
 
   if (plan.mode === "off" && steps.length === 0) {
     el.planView.classList.add("empty-state");
@@ -522,6 +574,51 @@ function renderPlan() {
     list.append(item);
   });
   el.planView.append(list);
+}
+
+function renderApproval() {
+	  const approval = state.pendingApproval;
+	  el.approvalView.textContent = "";
+	  if (!approval) {
+	    el.approvalView.classList.add("empty-state");
+	    el.approvalView.textContent = "No shell approval is pending.";
+	    setApprovalActionsDisabled(true);
+	    return;
+	  }
+	  el.approvalView.classList.remove("empty-state");
+	  const workspace = document.createElement("p");
+	  workspace.className = "approval-workspace";
+	  workspace.textContent = `Workspace: ${approval.workspace || "-"}`;
+	  el.approvalView.append(workspace);
+
+	  const reasons = document.createElement("ul");
+	  reasons.className = "approval-reasons";
+	  (approval.risk_reasons || []).forEach((reason) => {
+	    const item = document.createElement("li");
+	    item.textContent = reason;
+	    reasons.append(item);
+	  });
+	  el.approvalView.append(reasons);
+
+	  const script = document.createElement("pre");
+	  script.className = "approval-script";
+	  script.textContent = shellCommandFromApproval(approval);
+	  el.approvalView.append(script);
+	  setApprovalActionsDisabled(state.busy);
+}
+
+function shellCommandFromApproval(approval) {
+	  try {
+	    return JSON.parse(approval.tool_call?.arguments || "{}").command || "";
+	  } catch (_) {
+	    return "(stored shell arguments could not be decoded)";
+	  }
+}
+
+function setApprovalActionsDisabled(value) {
+	  el.approveShellButton.disabled = value;
+	  el.denyShellButton.disabled = value;
+	  el.cancelShellButton.disabled = value;
 }
 
 function planLabelFromRun(run) {
@@ -972,6 +1069,7 @@ async function withBusy(work) {
 }
 
 function setBusy(value) {
+	  const awaitingApproval = Boolean(state.pendingApproval);
   [
     el.newRunButton,
     el.loadRunButton,
@@ -984,8 +1082,10 @@ function setBusy(value) {
     el.sendButton,
     el.streamButton,
   ].forEach((button) => {
-    button.disabled = value;
+	    button.disabled = value || awaitingApproval;
   });
+	el.planModeToggle.disabled = value || awaitingApproval;
+	  setApprovalActionsDisabled(value || !awaitingApproval);
   renderPlan();
 }
 

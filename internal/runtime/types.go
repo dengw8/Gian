@@ -100,6 +100,33 @@ type ToolResult struct {
 	Error      string `json:"error,omitempty"`
 }
 
+type ShellApprovalStatus string
+
+const (
+	ShellApprovalPending   ShellApprovalStatus = "pending"
+	ShellApprovalExecuting ShellApprovalStatus = "executing"
+)
+
+type ShellApprovalDecision string
+
+const (
+	ShellApprovalApprove ShellApprovalDecision = "approve"
+	ShellApprovalDeny    ShellApprovalDecision = "deny"
+	ShellApprovalCancel  ShellApprovalDecision = "cancel"
+)
+
+type PendingShellApproval struct {
+	ID                 string              `json:"id"`
+	Version            int                 `json:"version"`
+	ToolCall           ToolCall            `json:"tool_call"`
+	Workspace          string              `json:"workspace"`
+	RiskReasons        []string            `json:"risk_reasons"`
+	ScriptHash         string              `json:"script_hash"`
+	RemainingToolCalls []ToolCall          `json:"remaining_tool_calls,omitempty"`
+	RequestedAt        time.Time           `json:"requested_at"`
+	Status             ShellApprovalStatus `json:"status"`
+}
+
 type ToolDefinition struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`

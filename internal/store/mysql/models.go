@@ -55,9 +55,10 @@ func (modelLogRecord) TableName() string {
 }
 
 type stateRecord struct {
-	RunID             string  `gorm:"primaryKey;size:64"`
-	PlanPayload       *string `gorm:"type:longtext"`
-	CompactionPayload *string `gorm:"type:longtext"`
+	RunID                  string  `gorm:"primaryKey;size:64"`
+	PlanPayload            *string `gorm:"type:longtext"`
+	CompactionPayload      *string `gorm:"type:longtext"`
+	PendingApprovalPayload *string `gorm:"type:longtext"`
 }
 
 func (stateRecord) TableName() string {
