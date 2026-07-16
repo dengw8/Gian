@@ -142,7 +142,7 @@ func TestServesEmbeddedConsoleApp(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Agent Service Console") {
+	if !strings.Contains(rec.Body.String(), "Gian Console") {
 		t.Fatalf("console HTML missing expected title: %s", rec.Body.String())
 	}
 }

@@ -693,13 +693,23 @@ function renderMessages(messages) {
 
   messages.forEach((message) => {
     if (message.tool_calls?.length) {
-      appendMessageCard(message);
+      if (!isToolCallOnlyMessage(message)) {
+        appendMessageCard(message);
+      }
       message.tool_calls.forEach((toolCall) => appendToolCallCard(toolCall));
       return;
     }
     appendMessageCard(message);
   });
   el.messageTimeline.scrollTop = el.messageTimeline.scrollHeight;
+}
+
+function isToolCallOnlyMessage(message) {
+  return (
+    message.role === "assistant" &&
+    !(message.content || "").trim() &&
+    (message.attachments || []).length === 0
+  );
 }
 
 function appendOptimisticUserMessage(content, attachments) {
