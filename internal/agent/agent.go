@@ -28,12 +28,14 @@ type Runner struct {
 }
 
 type TurnInput struct {
-	Message     string
-	Attachments []runtime.Attachment
-	History     []runtime.Message
-	Plan        runtime.PlanState
-	Compaction  runtime.CompactionState
-	Events      EventSink
+	Message           string
+	Attachments       []runtime.Attachment
+	History           []runtime.Message
+	Plan              runtime.PlanState
+	Compaction        runtime.CompactionState
+	TurnID            string
+	StreamModelOutput bool
+	Events            EventSink
 }
 
 type TurnOutput struct {
@@ -52,6 +54,7 @@ type ResumeInput struct {
 	Compaction runtime.CompactionState
 	Approval   runtime.PendingShellApproval
 	Decision   runtime.ShellApprovalDecision
+	TurnID     string
 	Events     EventSink
 }
 
@@ -91,7 +94,7 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 		Compaction: input.Compaction,
 	}
 	newMessageStart := len(history)
-	recorder := newTurnRecorder(input.Events)
+	recorder := newTurnRecorder(input.Events, input.TurnID, input.StreamModelOutput)
 
 	if err := r.beforeAgent(ctx, state); err != nil {
 		return TurnOutput{}, err
@@ -116,7 +119,7 @@ func (r *Runner) ResumeTurn(ctx context.Context, input ResumeInput) (TurnOutput,
 		Compaction: input.Compaction,
 	}
 	newMessageStart := len(state.Messages)
-	recorder := newTurnRecorder(input.Events)
+	recorder := newTurnRecorder(input.Events, input.TurnID, false)
 	if err := r.beforeAgent(ctx, state); err != nil {
 		return TurnOutput{}, err
 	}
@@ -127,18 +130,18 @@ func (r *Runner) ResumeTurn(ctx context.Context, input ResumeInput) (TurnOutput,
 	result := runtime.ToolResult{ToolCallID: input.Approval.ToolCall.ID, Name: input.Approval.ToolCall.Name}
 	switch input.Decision {
 	case runtime.ShellApprovalApprove:
-		if err := recorder.emit(runtime.NewEvent("approval_approved", "Shell approval approved")); err != nil {
+		if err := recorder.emit(toolEvent("approval_approved", "Shell approval approved", input.Approval.ToolCall.ID)); err != nil {
 			return TurnOutput{}, err
 		}
 		result = r.executeApprovedTool(ctx, input.Approval.ToolCall, state)
 	case runtime.ShellApprovalDeny:
-		if err := recorder.emit(runtime.NewEvent("approval_denied", "Shell approval denied")); err != nil {
+		if err := recorder.emit(toolEvent("approval_denied", "Shell approval denied", input.Approval.ToolCall.ID)); err != nil {
 			return TurnOutput{}, err
 		}
 		result.Error = "shell execution denied by user"
 		_ = r.afterTool(ctx, result, state)
 	case runtime.ShellApprovalCancel:
-		if err := recorder.emit(runtime.NewEvent("approval_cancelled", "Shell approval cancelled")); err != nil {
+		if err := recorder.emit(toolEvent("approval_cancelled", "Shell approval cancelled", input.Approval.ToolCall.ID)); err != nil {
 			return TurnOutput{}, err
 		}
 		result.Error = "shell execution cancelled by user"
@@ -146,7 +149,7 @@ func (r *Runner) ResumeTurn(ctx context.Context, input ResumeInput) (TurnOutput,
 	default:
 		return TurnOutput{}, fmt.Errorf("unsupported shell approval decision %q", input.Decision)
 	}
-	if err := recorder.emit(runtime.NewEvent("tool_completed", result.Name)); err != nil {
+	if err := recorder.emit(toolEvent("tool_completed", result.Name, result.ToolCallID)); err != nil {
 		return TurnOutput{}, err
 	}
 	appendToolMessage(state, result)
@@ -162,16 +165,21 @@ func (r *Runner) ResumeTurn(ctx context.Context, input ResumeInput) (TurnOutput,
 }
 
 type turnRecorder struct {
-	events    []runtime.Event
-	modelLogs []runtime.ModelLog
-	sink      EventSink
+	events            []runtime.Event
+	modelLogs         []runtime.ModelLog
+	sink              EventSink
+	turnID            string
+	streamModelOutput bool
 }
 
-func newTurnRecorder(sink EventSink) *turnRecorder {
-	return &turnRecorder{sink: sink}
+func newTurnRecorder(sink EventSink, turnID string, streamModelOutput bool) *turnRecorder {
+	return &turnRecorder{sink: sink, turnID: turnID, streamModelOutput: streamModelOutput}
 }
 
 func (r *turnRecorder) emit(event runtime.Event) error {
+	if event.TurnID == "" {
+		event.TurnID = r.turnID
+	}
 	r.events = append(r.events, event)
 	return emit(r.sink, event)
 }
@@ -194,11 +202,26 @@ func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart
 			return TurnOutput{}, err
 		}
 
-		if err := recorder.emit(runtime.NewEvent("model_started", "Model started")); err != nil {
+		modelCallID := modelCallID(recorder.turnID, i+1)
+		if err := recorder.emit(modelEvent("model_started", "Model started", modelCallID)); err != nil {
 			return TurnOutput{}, err
 		}
-		modelLog := newModelLog(len(recorder.modelLogs)+1, req)
-		resp, err := r.model.Generate(ctx, req)
+		modelLog := newModelLog(len(recorder.modelLogs)+1, modelCallID, req)
+		var resp model.Response
+		var err error
+		if recorder.streamModelOutput {
+			if streamer, ok := r.model.(model.StreamingProvider); ok {
+				resp, err = streamer.GenerateStream(ctx, req, func(delta string) error {
+					event := modelEvent("model_output_delta", "Model output delta", modelCallID)
+					event.Data = map[string]any{"delta": delta}
+					return recorder.emit(event)
+				})
+			} else {
+				resp, err = r.model.Generate(ctx, req)
+			}
+		} else {
+			resp, err = r.model.Generate(ctx, req)
+		}
 		if err != nil {
 			modelLog.CompletedAt = time.Now().UTC()
 			modelLog.Error = err.Error()
@@ -211,7 +234,7 @@ func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart
 			Usage:   resp.Usage,
 		}
 		recorder.modelLogs = append(recorder.modelLogs, modelLog)
-		if err := recorder.emit(modelCompletedEvent(resp.Usage)); err != nil {
+		if err := recorder.emit(modelCompletedEvent(modelCallID, resp.Usage)); err != nil {
 			return TurnOutput{}, err
 		}
 		if err := r.afterModel(ctx, &resp, state); err != nil {
@@ -240,18 +263,18 @@ func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart
 
 func (r *Runner) runToolCalls(ctx context.Context, calls []runtime.ToolCall, state *State, recorder *turnRecorder) (*runtime.PendingShellApproval, error) {
 	for i, call := range calls {
-		if err := recorder.emit(runtime.NewEvent("tool_started", call.Name)); err != nil {
+		if err := recorder.emit(toolEvent("tool_started", call.Name, call.ID)); err != nil {
 			return nil, err
 		}
 		result, pending := r.executeTool(ctx, call, state)
 		if pending != nil {
 			pending.RemainingToolCalls = append([]runtime.ToolCall(nil), calls[i+1:]...)
-			if err := recorder.emit(runtime.NewEvent("approval_required", "Shell approval required")); err != nil {
+			if err := recorder.emit(toolEvent("approval_required", "Shell approval required", call.ID)); err != nil {
 				return nil, err
 			}
 			return pending, nil
 		}
-		if err := recorder.emit(runtime.NewEvent("tool_completed", result.Name)); err != nil {
+		if err := recorder.emit(toolEvent("tool_completed", result.Name, result.ToolCallID)); err != nil {
 			return nil, err
 		}
 		appendToolMessage(state, result)
@@ -285,9 +308,10 @@ func (r *Runner) turnOutput(state *State, newMessageStart int, recorder *turnRec
 	}
 }
 
-func newModelLog(index int, req model.Request) runtime.ModelLog {
+func newModelLog(index int, callID string, req model.Request) runtime.ModelLog {
 	return runtime.ModelLog{
 		Index:     index,
+		CallID:    callID,
 		StartedAt: time.Now().UTC(),
 		Request: runtime.ModelRequestLog{
 			SystemPrompt: req.SystemPrompt,
@@ -346,10 +370,30 @@ func emit(sink EventSink, event runtime.Event) error {
 	return sink(event)
 }
 
-func modelCompletedEvent(usage *runtime.TokenUsage) runtime.Event {
+func modelCompletedEvent(modelCallID string, usage *runtime.TokenUsage) runtime.Event {
 	event := runtime.NewEvent("model_completed", "Model completed")
+	event.ModelCallID = modelCallID
 	event.Usage = usage
 	return event
+}
+
+func modelEvent(eventType, message, modelCallID string) runtime.Event {
+	event := runtime.NewEvent(eventType, message)
+	event.ModelCallID = modelCallID
+	return event
+}
+
+func toolEvent(eventType, message, toolCallID string) runtime.Event {
+	event := runtime.NewEvent(eventType, message)
+	event.ToolCallID = toolCallID
+	return event
+}
+
+func modelCallID(turnID string, index int) string {
+	if turnID == "" {
+		return fmt.Sprintf("model_call_%d", index)
+	}
+	return fmt.Sprintf("%s_model_%d", turnID, index)
 }
 
 func (r *Runner) executeTool(ctx context.Context, call runtime.ToolCall, state *State) (runtime.ToolResult, *runtime.PendingShellApproval) {

@@ -247,6 +247,9 @@ data: {...}
 event: model_started
 data: {...}
 
+event: model_output_delta
+data: {"data":{"delta":"partial output"}, ...}
+
 event: model_completed
 data: {...}
 
@@ -260,7 +263,7 @@ event: turn_completed
 data: {...}
 ```
 
-Streamed events are also persisted.
+Streamed events are also persisted. Each persisted event has stable `id` and `run_id` fields; execution events additionally carry `turn_id`, and model and tool events carry their respective `model_call_id` or `tool_call_id`. `model_output_delta` events contain the incremental text in `data.delta` and are emitted as the OpenAI-compatible provider receives each stream chunk.
 
 `model_completed` events include per-call `usage` when the configured Model Provider returns token accounting. Providers that do not return usage leave the field absent.
 

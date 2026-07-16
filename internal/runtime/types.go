@@ -32,10 +32,16 @@ type Attachment struct {
 }
 
 type Event struct {
-	Type      string      `json:"type"`
-	CreatedAt time.Time   `json:"created_at"`
-	Message   string      `json:"message,omitempty"`
-	Usage     *TokenUsage `json:"usage,omitempty"`
+	ID          string         `json:"id,omitempty"`
+	Type        string         `json:"type"`
+	RunID       string         `json:"run_id,omitempty"`
+	TurnID      string         `json:"turn_id,omitempty"`
+	ModelCallID string         `json:"model_call_id,omitempty"`
+	ToolCallID  string         `json:"tool_call_id,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	Message     string         `json:"message,omitempty"`
+	Data        map[string]any `json:"data,omitempty"`
+	Usage       *TokenUsage    `json:"usage,omitempty"`
 }
 
 func NewEvent(eventType string, message string) Event {
@@ -68,6 +74,7 @@ type ModelResponseLog struct {
 
 type ModelLog struct {
 	Index       int              `json:"index"`
+	CallID      string           `json:"call_id,omitempty"`
 	StartedAt   time.Time        `json:"started_at"`
 	CompletedAt time.Time        `json:"completed_at,omitempty"`
 	Request     ModelRequestLog  `json:"request"`

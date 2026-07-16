@@ -177,6 +177,59 @@ func TestOpenAICompatibleProviderMapsToolResultMessage(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleProviderStreamsTextAndToolCalls(t *testing.T) {
+	var captured openAIChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("content-type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n"))
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"content":"lo","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\""}}]}}]}
+
+`))
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"note.txt\"}"}}]}}]}
+
+`))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	provider, err := NewOpenAICompatibleProvider(OpenAICompatibleConfig{
+		BaseURL: server.URL,
+		Model:   "test-model",
+		APIKey:  "test-key",
+		Client:  server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deltas []string
+	resp, err := provider.GenerateStream(context.Background(), Request{}, func(delta string) error {
+		deltas = append(deltas, delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !captured.Stream {
+		t.Fatal("stream request flag was not set")
+	}
+	if got := resp.Message.Content; got != "hello" {
+		t.Fatalf("content = %q, want hello", got)
+	}
+	if len(deltas) != 2 || deltas[0] != "hel" || deltas[1] != "lo" {
+		t.Fatalf("deltas = %#v", deltas)
+	}
+	if len(resp.Message.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %#v", resp.Message.ToolCalls)
+	}
+	call := resp.Message.ToolCalls[0]
+	if call.ID != "call_1" || call.Name != "read_file" || string(call.Arguments) != `{"path":"note.txt"}` {
+		t.Fatalf("tool call = %#v", call)
+	}
+}
+
 func writeOpenAITestResponse(t *testing.T, w http.ResponseWriter, resp openAIChatResponse) {
 	t.Helper()
 	w.Header().Set("content-type", "application/json")

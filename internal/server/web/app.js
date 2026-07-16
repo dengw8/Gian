@@ -11,6 +11,7 @@ const state = {
   attachments: [],
   activeInspector: "planPanel",
   busy: false,
+  streamingAssistant: null,
 };
 
 const el = {
@@ -381,15 +382,25 @@ async function submitTurn(streaming) {
     const optimistic = appendOptimisticUserMessage(message, attachments);
     try {
       if (!state.currentRunId) {
-        const data = await requestJSON("/v1/runs", {
-          method: "POST",
-          body: JSON.stringify({ message, attachments, plan_mode: el.planModeToggle.checked }),
-        });
-        selectRun(data.run);
-        selectPlan(data.plan);
-        renderMessages(data.messages || []);
-        await Promise.all([refreshEvents(), refreshModelLogs(), loadRunHistory()]);
-        toast("Run created and turn completed");
+        if (streaming) {
+          const data = await requestJSON("/v1/runs", {
+            method: "POST",
+            body: JSON.stringify({ plan_mode: el.planModeToggle.checked }),
+          });
+          selectRun(data.run);
+          selectPlan(data.plan);
+          await streamTurn(message, attachments);
+        } else {
+          const data = await requestJSON("/v1/runs", {
+            method: "POST",
+            body: JSON.stringify({ message, attachments, plan_mode: el.planModeToggle.checked }),
+          });
+          selectRun(data.run);
+          selectPlan(data.plan);
+          renderMessages(data.messages || []);
+          await Promise.all([refreshEvents(), refreshModelLogs(), refreshApproval(), loadRunHistory()]);
+          toast("Run created and turn completed");
+        }
         return;
       }
 
@@ -406,7 +417,7 @@ async function submitTurn(streaming) {
         selectRun(data.run);
         selectPlan(data.plan);
         renderMessages(data.messages || []);
-        await Promise.all([refreshEvents(), refreshModelLogs(), loadRunHistory()]);
+        await Promise.all([refreshEvents(), refreshModelLogs(), refreshApproval(), loadRunHistory()]);
       }
     } catch (error) {
       markOptimisticMessage(optimistic, "failed");
@@ -435,6 +446,7 @@ async function streamTurn(message, attachments) {
   }
 
   state.events = [];
+  state.streamingAssistant = null;
   renderEvents();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -449,7 +461,7 @@ async function streamTurn(message, attachments) {
     }
   }
 
-  await Promise.all([refreshRunMetadata(), refreshMessages(), refreshEvents(), refreshModelLogs(), refreshPlan(), loadRunHistory()]);
+  await Promise.all([refreshRunMetadata(), refreshMessages(), refreshEvents(), refreshModelLogs(), refreshPlan(), refreshApproval(), loadRunHistory()]);
 }
 
 function consumeSSEBuffer(buffer) {
@@ -467,13 +479,35 @@ function consumeSSEBuffer(buffer) {
       if (eventLine && !event.type) {
         event.type = eventLine.slice(6).trim();
       }
-      state.events.push(event);
+      handleStreamEvent(event);
       renderEvents();
     } catch (error) {
       toast(`Invalid SSE payload: ${error.message}`);
     }
   });
   return remaining;
+}
+
+function handleStreamEvent(event) {
+  state.events.push(event);
+  if (event.type === "model_started") {
+    state.streamingAssistant = null;
+    return;
+  }
+  if (event.type !== "model_output_delta" || typeof event.data?.delta !== "string") {
+    return;
+  }
+  if (!state.streamingAssistant) {
+    state.streamingAssistant = appendMessageCard({
+      role: "assistant",
+      content: "",
+      created_at: event.created_at,
+      pending_state: "streaming",
+    });
+  }
+  const body = state.streamingAssistant.querySelector(".card-body");
+  body.textContent += event.data.delta;
+  el.messageTimeline.scrollTop = el.messageTimeline.scrollHeight;
 }
 
 function selectRun(run) {
@@ -608,8 +642,12 @@ function renderApproval() {
 }
 
 function shellCommandFromApproval(approval) {
+	  const argumentsValue = approval.tool_call?.arguments;
+	  if (argumentsValue && typeof argumentsValue === "object") {
+	    return argumentsValue.command || "";
+	  }
 	  try {
-	    return JSON.parse(approval.tool_call?.arguments || "{}").command || "";
+	    return JSON.parse(argumentsValue || "{}").command || "";
 	  } catch (_) {
 	    return "(stored shell arguments could not be decoded)";
 	  }

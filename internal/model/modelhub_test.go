@@ -116,7 +116,7 @@ func TestModelHubProviderMapsContentArrayAndToolCallResponse(t *testing.T) {
 						Type: "function",
 						Function: openAIToolFunction{
 							Name:      "read_file",
-							Arguments: json.RawMessage(`{"path":"README.md"}`),
+							Arguments: json.RawMessage(`"{\"path\":\"README.md\"}"`),
 						},
 					}},
 				},
@@ -200,6 +200,50 @@ func TestModelHubProviderMapsToolResultMessage(t *testing.T) {
 	msg := captured.Messages[0]
 	if msg.Role != "tool" || msg.ToolCallID != "call_1" || msg.Content[0].Text != "file content" {
 		t.Fatalf("tool result message = %#v", msg)
+	}
+}
+
+func TestModelHubProviderEncodesToolCallArgumentsAsString(t *testing.T) {
+	var captured modelHubRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatal(err)
+		}
+		writeModelHubTestResponse(t, w, modelHubResponse{
+			Choices: []modelHubChoice{{
+				Message: modelHubResponseMessage{Role: "assistant", Content: json.RawMessage(`"done"`)},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	provider, err := NewModelHubProvider(ModelHubConfig{
+		Endpoint: server.URL,
+		Model:    "test-model",
+		AK:       "test-ak",
+		Client:   server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = provider.Generate(context.Background(), Request{
+		Messages: []runtime.Message{{
+			Role: runtime.RoleAssistant,
+			ToolCalls: []runtime.ToolCall{{
+				ID:        "call_1",
+				Name:      "shell",
+				Arguments: json.RawMessage(`{"command":"node -v"}`),
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(captured.Messages) != 1 || len(captured.Messages[0].ToolCalls) != 1 {
+		t.Fatalf("captured messages = %#v", captured.Messages)
+	}
+	if got := string(captured.Messages[0].ToolCalls[0].Function.Arguments); got != `"{\"command\":\"node -v\"}"` {
+		t.Fatalf("arguments = %s, want JSON string", got)
 	}
 }
 

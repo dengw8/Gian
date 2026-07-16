@@ -13,6 +13,10 @@ type Provider interface {
 	Generate(ctx context.Context, req Request) (Response, error)
 }
 
+type StreamingProvider interface {
+	GenerateStream(ctx context.Context, req Request, onDelta func(string) error) (Response, error)
+}
+
 type Request struct {
 	SystemPrompt string                   `json:"system_prompt"`
 	Messages     []runtime.Message        `json:"messages"`
@@ -106,6 +110,19 @@ func (p *FakeProvider) Generate(ctx context.Context, req Request) (Response, err
 			Content: fakeTextResponse(last, lastAttachmentCount),
 		},
 	}, nil
+}
+
+func (p *FakeProvider) GenerateStream(ctx context.Context, req Request, onDelta func(string) error) (Response, error) {
+	resp, err := p.Generate(ctx, req)
+	if err != nil {
+		return Response{}, err
+	}
+	if resp.Message.Content != "" && onDelta != nil {
+		if err := onDelta(resp.Message.Content); err != nil {
+			return Response{}, err
+		}
+	}
+	return resp, nil
 }
 
 func fakeTextResponse(text string, attachmentCount int) string {

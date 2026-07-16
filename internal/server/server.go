@@ -3,8 +3,10 @@ package server
 import (
 	"bufio"
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,7 +163,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
-	if err := s.store.AppendEvents(r.Context(), meta.ID, []runtime.Event{runtime.NewEvent("run_created", "Run created")}); err != nil {
+	if err := s.appendEvent(r.Context(), meta.ID, runtime.NewEvent("run_created", "Run created")); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
@@ -174,7 +176,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		plan, _ = s.store.GetPlan(r.Context(), meta.ID)
-		if err := s.store.AppendEvents(r.Context(), meta.ID, []runtime.Event{runtime.NewEvent("plan_mode_enabled", "Plan mode enabled")}); err != nil {
+		if err := s.appendEvent(r.Context(), meta.ID, runtime.NewEvent("plan_mode_enabled", "Plan mode enabled")); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
 		}
@@ -186,7 +188,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, nil, plan, runtime.EmptyCompactionState(), nil)
+	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, nil, plan, runtime.EmptyCompactionState(), nil, false)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
@@ -243,7 +245,7 @@ func (s *Server) handleAppendTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, history, plan, compaction, nil)
+	out, meta, err := s.executeTurn(r, meta, message, req.Attachments, history, plan, compaction, nil, false)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
@@ -306,13 +308,13 @@ func (s *Server) handleAppendTurnStream(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_, _, err = s.executeTurn(r, meta, message, req.Attachments, history, plan, compaction, stream.write)
+	_, _, err = s.executeTurn(r, meta, message, req.Attachments, history, plan, compaction, stream.write, true)
 	if err != nil {
 		return
 	}
 }
 
-func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message string, attachments []runtime.Attachment, history []runtime.Message, plan runtime.PlanState, compaction runtime.CompactionState, sink agent.EventSink) (agent.TurnOutput, store.RunMetadata, error) {
+func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message string, attachments []runtime.Attachment, history []runtime.Message, plan runtime.PlanState, compaction runtime.CompactionState, sink agent.EventSink, streamModelOutput bool) (agent.TurnOutput, store.RunMetadata, error) {
 	if s.runner == nil {
 		return agent.TurnOutput{}, meta, errors.New("agent runner is not configured")
 	}
@@ -322,17 +324,20 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 		return agent.TurnOutput{}, meta, err
 	}
 	meta = updated
+	turnID := newTraceID("turn")
 
-	if err := s.emitAndPersist(r, meta.ID, runtime.NewEvent("turn_started", "Turn started"), sink); err != nil {
+	if err := s.emitAndPersist(r, meta.ID, turnEvent("turn_started", "Turn started", turnID), sink); err != nil {
 		return agent.TurnOutput{}, meta, err
 	}
 
 	out, err := s.runner.RunTurn(r.Context(), agent.TurnInput{
-		History:     history,
-		Message:     message,
-		Attachments: attachments,
-		Plan:        plan,
-		Compaction:  compaction,
+		History:           history,
+		Message:           message,
+		Attachments:       attachments,
+		Plan:              plan,
+		Compaction:        compaction,
+		TurnID:            turnID,
+		StreamModelOutput: streamModelOutput,
 		Events: func(event runtime.Event) error {
 			return s.emitAndPersist(r, meta.ID, event, sink)
 		},
@@ -348,7 +353,7 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 		if updateErr == nil {
 			meta = updated
 		}
-		_ = s.emitAndPersist(r, meta.ID, runtime.NewEvent("turn_failed", err.Error()), sink)
+		_ = s.emitAndPersist(r, meta.ID, turnEvent("turn_failed", err.Error(), turnID), sink)
 		return agent.TurnOutput{}, meta, err
 	}
 
@@ -383,7 +388,7 @@ func (s *Server) executeTurn(r *http.Request, meta store.RunMetadata, message st
 		}
 		return out, meta, nil
 	}
-	if err := s.emitAndPersist(r, meta.ID, runtime.NewEvent("turn_completed", "Turn completed"), sink); err != nil {
+	if err := s.emitAndPersist(r, meta.ID, turnEvent("turn_completed", "Turn completed", turnID), sink); err != nil {
 		return agent.TurnOutput{}, meta, err
 	}
 	meta, err = s.store.UpdateRun(r.Context(), meta.ID, store.UpdateRunInput{Status: store.RunStatusCompleted})
@@ -446,12 +451,25 @@ func addIntPointers(a *int, b *int) *int {
 }
 
 func (s *Server) emitAndPersist(r *http.Request, runID string, event runtime.Event, sink agent.EventSink) error {
+	event = stampEvent(runID, event)
 	if sink != nil {
 		if err := sink(event); err != nil {
 			return err
 		}
 	}
 	return s.store.AppendEvents(r.Context(), runID, []runtime.Event{event})
+}
+
+func (s *Server) appendEvent(ctx context.Context, runID string, event runtime.Event) error {
+	return s.store.AppendEvents(ctx, runID, []runtime.Event{stampEvent(runID, event)})
+}
+
+func stampEvent(runID string, event runtime.Event) runtime.Event {
+	if event.ID == "" {
+		event.ID = newTraceID("evt")
+	}
+	event.RunID = runID
+	return event
 }
 
 func (s *Server) handleGetPendingApproval(w http.ResponseWriter, r *http.Request) {
@@ -545,12 +563,19 @@ func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	turnID := newTraceID("turn")
+	if err := s.emitAndPersist(r, runID, turnEvent("turn_started", "Turn started", turnID), nil); err != nil {
+		s.failResumedTurn(r.Context(), runID, err)
+		writeStoreError(w, err)
+		return
+	}
 	out, err := s.runner.ResumeTurn(r.Context(), agent.ResumeInput{
 		History:    history,
 		Plan:       plan,
 		Compaction: compaction,
 		Approval:   claimed,
 		Decision:   req.Decision,
+		TurnID:     turnID,
 		Events: func(event runtime.Event) error {
 			return s.emitAndPersist(r, runID, event, nil)
 		},
@@ -566,7 +591,7 @@ func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
-	if err := s.persistResumedOutput(r, runID, meta, claimed, out); err != nil {
+	if err := s.persistResumedOutput(r, runID, meta, claimed, out, turnID); err != nil {
 		s.failResumedTurn(r.Context(), runID, err)
 		writeStoreError(w, err)
 		return
@@ -584,7 +609,7 @@ func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) persistResumedOutput(r *http.Request, runID string, meta store.RunMetadata, claimed runtime.PendingShellApproval, out agent.TurnOutput) error {
+func (s *Server) persistResumedOutput(r *http.Request, runID string, meta store.RunMetadata, claimed runtime.PendingShellApproval, out agent.TurnOutput, turnID string) error {
 	if err := s.store.AppendMessages(r.Context(), runID, out.NewMessages); err != nil {
 		return err
 	}
@@ -611,7 +636,7 @@ func (s *Server) persistResumedOutput(r *http.Request, runID string, meta store.
 		_, err := s.store.UpdateRun(r.Context(), runID, store.UpdateRunInput{Status: store.RunStatusAwaitingApproval})
 		return err
 	}
-	if err := s.store.AppendEvents(r.Context(), runID, []runtime.Event{runtime.NewEvent("turn_completed", "Turn completed")}); err != nil {
+	if err := s.emitAndPersist(r, runID, turnEvent("turn_completed", "Turn completed", turnID), nil); err != nil {
 		return err
 	}
 	_, err := s.store.UpdateRun(r.Context(), runID, store.UpdateRunInput{Status: store.RunStatusCompleted})
@@ -636,13 +661,27 @@ func verifyStoredShellApproval(approval runtime.PendingShellApproval) error {
 func (s *Server) markExecutingApprovalFailed(ctx context.Context, runID, approvalID string) {
 	message := "shell approval execution was interrupted; manual recovery is required"
 	_, _ = s.store.UpdateRun(ctx, runID, store.UpdateRunInput{Status: store.RunStatusFailed, Error: message})
-	_ = s.store.AppendEvents(ctx, runID, []runtime.Event{runtime.NewEvent("approval_recovery_required", message)})
+	_ = s.appendEvent(ctx, runID, runtime.NewEvent("approval_recovery_required", message))
 	_ = s.store.ClearPendingShellApproval(ctx, runID, approvalID)
 }
 
 func (s *Server) failResumedTurn(ctx context.Context, runID string, cause error) {
 	_, _ = s.store.UpdateRun(ctx, runID, store.UpdateRunInput{Status: store.RunStatusFailed, Error: cause.Error()})
-	_ = s.store.AppendEvents(ctx, runID, []runtime.Event{runtime.NewEvent("turn_failed", cause.Error())})
+	_ = s.appendEvent(ctx, runID, runtime.NewEvent("turn_failed", cause.Error()))
+}
+
+func turnEvent(eventType, message, turnID string) runtime.Event {
+	event := runtime.NewEvent(eventType, message)
+	event.TurnID = turnID
+	return event
+}
+
+func newTraceID(prefix string) string {
+	bytes := make([]byte, 12)
+	if _, err := cryptorand.Read(bytes); err == nil {
+		return prefix + "_" + hex.EncodeToString(bytes)
+	}
+	return fmt.Sprintf("%s_%d", prefix, time.Now().UTC().UnixNano())
 }
 
 func rejectUnavailableRun(meta store.RunMetadata) error {
@@ -744,7 +783,7 @@ func (s *Server) handleSetPlanMode(w http.ResponseWriter, r *http.Request) {
 		eventType = "plan_mode_enabled"
 		message = "Plan mode enabled"
 	}
-	if err := s.store.AppendEvents(r.Context(), runID, []runtime.Event{runtime.NewEvent(eventType, message)}); err != nil {
+	if err := s.appendEvent(r.Context(), runID, runtime.NewEvent(eventType, message)); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -778,7 +817,7 @@ func (s *Server) handleExecutePlan(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if err := s.store.AppendEvents(r.Context(), runID, []runtime.Event{runtime.NewEvent("plan_execution_started", "Plan execution started")}); err != nil {
+	if err := s.appendEvent(r.Context(), runID, runtime.NewEvent("plan_execution_started", "Plan execution started")); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -807,7 +846,7 @@ func (s *Server) handleResetPlan(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if err := s.store.AppendEvents(r.Context(), runID, []runtime.Event{runtime.NewEvent("plan_reset", "Plan reset")}); err != nil {
+	if err := s.appendEvent(r.Context(), runID, runtime.NewEvent("plan_reset", "Plan reset")); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -872,6 +911,11 @@ func (s *sseStream) write(event runtime.Event) error {
 	data, err := json.Marshal(event)
 	if err != nil {
 		return err
+	}
+	if event.ID != "" {
+		if _, err := fmt.Fprintf(s.writer, "id: %s\n", event.ID); err != nil {
+			return err
+		}
 	}
 	if _, err := fmt.Fprintf(s.writer, "event: %s\ndata: %s\n\n", event.Type, data); err != nil {
 		return err

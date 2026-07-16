@@ -889,7 +889,7 @@ func TestAppendTurnStreamEmitsAndPersistsEvents(t *testing.T) {
 		t.Fatalf("content-type = %q, want text/event-stream", contentType)
 	}
 	body := rec.Body.String()
-	for _, eventName := range []string{"turn_started", "model_started", "model_completed", "tool_started", "tool_completed", "turn_completed"} {
+	for _, eventName := range []string{"turn_started", "model_started", "model_completed", "model_output_delta", "tool_started", "tool_completed", "turn_completed"} {
 		if !strings.Contains(body, "event: "+eventName) {
 			t.Fatalf("SSE body missing %s: %s", eventName, body)
 		}
@@ -899,9 +899,19 @@ func TestAppendTurnStreamEmitsAndPersistsEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, eventName := range []string{"turn_started", "model_started", "model_completed", "tool_started", "tool_completed", "turn_completed"} {
+	for _, eventName := range []string{"turn_started", "model_started", "model_completed", "model_output_delta", "tool_started", "tool_completed", "turn_completed"} {
 		if !hasEventType(events, eventName) {
 			t.Fatalf("persisted events missing %s: %#v", eventName, events)
+		}
+	}
+	for _, event := range events {
+		if event.ID == "" || event.RunID != created.Run.ID {
+			t.Fatalf("event lacks trace identity: %#v", event)
+		}
+		if event.Type == "model_output_delta" {
+			if event.TurnID == "" || event.ModelCallID == "" || event.Data["delta"] == "" {
+				t.Fatalf("model delta lacks structured fields: %#v", event)
+			}
 		}
 	}
 

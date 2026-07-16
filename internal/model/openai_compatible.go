@@ -1,12 +1,14 @@
 package model
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/dengw8/Gian/internal/runtime"
@@ -96,10 +98,131 @@ func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req Request) (R
 	}, nil
 }
 
+func (p *OpenAICompatibleProvider) GenerateStream(ctx context.Context, req Request, onDelta func(string) error) (Response, error) {
+	payload := openAIChatRequest{
+		Model:    p.model,
+		Messages: toOpenAIMessages(req),
+		Tools:    toOpenAITools(req.Tools),
+		Stream:   true,
+	}
+	if len(payload.Tools) == 0 {
+		payload.Tools = nil
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return Response{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return Response{}, err
+	}
+	httpReq.Header.Set("authorization", "Bearer "+p.apiKey)
+	httpReq.Header.Set("content-type", "application/json")
+	httpResp, err := p.client.Do(httpReq)
+	if err != nil {
+		return Response{}, err
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		respBody, readErr := io.ReadAll(httpResp.Body)
+		if readErr != nil {
+			return Response{}, readErr
+		}
+		return Response{}, fmt.Errorf("openai-compatible provider returned %s: %s", httpResp.Status, strings.TrimSpace(string(respBody)))
+	}
+
+	var content strings.Builder
+	toolCalls := map[int]*openAIStreamToolCall{}
+	var usage *runtime.TokenUsage
+	scanner := bufio.NewScanner(httpResp.Body)
+	scanner.Buffer(make([]byte, 32*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk openAIStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return Response{}, fmt.Errorf("decode openai-compatible stream chunk: %w", err)
+		}
+		if chunkUsage := chunk.Usage.toTokenUsage(); chunkUsage != nil {
+			usage = chunkUsage
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		delta := chunk.Choices[0].Delta
+		if delta.Content != "" {
+			content.WriteString(delta.Content)
+			if onDelta != nil {
+				if err := onDelta(delta.Content); err != nil {
+					return Response{}, err
+				}
+			}
+		}
+		for _, partial := range delta.ToolCalls {
+			call := toolCalls[partial.Index]
+			if call == nil {
+				call = &openAIStreamToolCall{Index: partial.Index}
+				toolCalls[partial.Index] = call
+			}
+			if partial.ID != "" {
+				call.ID = partial.ID
+			}
+			if partial.Type != "" {
+				call.Type = partial.Type
+			}
+			if partial.Function.Name != "" {
+				call.Function.Name = partial.Function.Name
+			}
+			call.Function.Arguments += partial.Function.Arguments
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return Response{}, err
+	}
+
+	return Response{
+		Message: runtime.Message{Role: runtime.RoleAssistant, Content: content.String(), ToolCalls: streamToolCalls(toolCalls)},
+		Usage:   usage,
+	}, nil
+}
+
 type openAIChatRequest struct {
 	Model    string          `json:"model"`
 	Messages []openAIMessage `json:"messages"`
 	Tools    []openAITool    `json:"tools,omitempty"`
+	Stream   bool            `json:"stream,omitempty"`
+}
+
+type openAIStreamChunk struct {
+	Choices []openAIStreamChoice `json:"choices"`
+	Usage   openAIUsage          `json:"usage,omitempty"`
+}
+
+type openAIStreamChoice struct {
+	Delta openAIStreamDelta `json:"delta"`
+}
+
+type openAIStreamDelta struct {
+	Content   string                 `json:"content"`
+	ToolCalls []openAIStreamToolCall `json:"tool_calls"`
+}
+
+type openAIStreamToolCall struct {
+	Index    int                      `json:"index"`
+	ID       string                   `json:"id"`
+	Type     string                   `json:"type"`
+	Function openAIStreamToolFunction `json:"function"`
+}
+
+type openAIStreamToolFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type openAIMessage struct {
@@ -227,12 +350,13 @@ func toOpenAIToolCalls(calls []runtime.ToolCall) []openAIToolCall {
 	}
 	toolCalls := make([]openAIToolCall, 0, len(calls))
 	for _, call := range calls {
+		arguments, _ := json.Marshal(string(normalizeToolCallArguments(call.Arguments)))
 		toolCalls = append(toolCalls, openAIToolCall{
 			ID:   call.ID,
 			Type: "function",
 			Function: openAIToolFunction{
 				Name:      call.Name,
-				Arguments: call.Arguments,
+				Arguments: arguments,
 			},
 		})
 	}
@@ -256,8 +380,37 @@ func fromOpenAIToolCalls(calls []openAIToolCall) []runtime.ToolCall {
 		toolCalls = append(toolCalls, runtime.ToolCall{
 			ID:        call.ID,
 			Name:      call.Function.Name,
-			Arguments: call.Function.Arguments,
+			Arguments: normalizeToolCallArguments(call.Function.Arguments),
 		})
 	}
 	return toolCalls
+}
+
+func normalizeToolCallArguments(arguments json.RawMessage) json.RawMessage {
+	var encoded string
+	if err := json.Unmarshal(arguments, &encoded); err == nil && json.Valid([]byte(encoded)) {
+		return json.RawMessage(encoded)
+	}
+	return arguments
+}
+
+func streamToolCalls(calls map[int]*openAIStreamToolCall) []runtime.ToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	indices := make([]int, 0, len(calls))
+	for index := range calls {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	result := make([]runtime.ToolCall, 0, len(calls))
+	for _, index := range indices {
+		call := calls[index]
+		result = append(result, runtime.ToolCall{
+			ID:        call.ID,
+			Name:      call.Function.Name,
+			Arguments: json.RawMessage(call.Function.Arguments),
+		})
+	}
+	return result
 }
