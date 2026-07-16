@@ -1,0 +1,27 @@
+internal/server/server_test.go
+  s_39b15ab96b02ea::t_b41c96b309bcad 145
+internal/server/web/app.js
+  s_39b15ab96b02ea::t_62e1abc1b044a0 696-698,707-714
+internal/server/web/index.html
+  s_39b15ab96b02ea::t_249f976052681e 6,15,17-18
+internal/server/web/styles.css
+  s_39b15ab96b02ea::t_4646bd4082c37f 713-714,1235-1236
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "16034a37270b36d01c7db16b6d0a565d43e91985",
+  "prompts": {},
+  "sessions": {
+    "s_39b15ab96b02ea": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f69e9-b8d5-7de3-9d40-bd34e63ec507",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
