@@ -1,0 +1,37 @@
+README.md
+  s_2b2e1a1a1c2306::t_8503d20f7c6fc5 250-252,266
+docs/superpowers/specs/2026-07-15-observability-and-token-streaming-design.md
+  s_2b2e1a1a1c2306::t_6ed33e3406fad8 1-49
+internal/agent/agent.go
+  s_2b2e1a1a1c2306::t_d5a0e1d4e57285 31-38,57,97,122,133,138,144,152,168-172,175-176,180-182,205-206,209-224,237,266,272,277,311,314,373,375,380-398
+internal/model/model.go
+  s_2b2e1a1a1c2306::t_4c429b5ec959fc 16-19,115-127
+internal/model/openai_compatible_test.go
+  s_2b2e1a1a1c2306::t_2938a25289a3d1 180-232
+internal/runtime/types.go
+  s_2b2e1a1a1c2306::t_72d1594abf7373 35-44,77
+internal/server/server.go
+  s_2b2e1a1a1c2306::t_47846fe3d03d40 6,9,166,179,191,248,311,317,327,329,334-340,356,391,454,463-474,566-571,578,594,612,639,664,670-684,786,820,849,915-919
+internal/server/server_test.go
+  s_2b2e1a1a1c2306::t_66090dfbd95249 892,902,907-916
+internal/server/web/app.js
+  s_2b2e1a1a1c2306::t_588483da55863f 14,385-403,420,449,464,482,491-512,645-648,650
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ffbd2b445aed9646ed969eab01bcace2b81908a3",
+  "prompts": {},
+  "sessions": {
+    "s_2b2e1a1a1c2306": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6518-3c5d-7250-8e95-5c4ea4e6ffca",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
