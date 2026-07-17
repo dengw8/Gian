@@ -81,6 +81,35 @@ func TestTraceSpansKeepLatestRevision(t *testing.T) {
 	}
 }
 
+func TestExecutionEventsAreOrderedIncrementallyAndIdempotently(t *testing.T) {
+	ctx := context.Background()
+	localStore := New(t.TempDir())
+	meta, err := localStore.CreateRun(ctx, store.CreateRunInput{ModelProvider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []runtime.ExecutionEvent{
+		{SchemaVersion: 1, ID: "event_2", RunID: meta.ID, Sequence: 2, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventModelCompleted},
+		{SchemaVersion: 1, ID: "event_1", RunID: meta.ID, Sequence: 1, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventModelStarted},
+		{SchemaVersion: 1, ID: "event_1_retry", RunID: meta.ID, Sequence: 1, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventModelStarted},
+	} {
+		if err := localStore.AppendExecutionEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, err := localStore.ListExecutionEvents(ctx, meta.ID, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Sequence != 2 {
+		t.Fatalf("events = %#v, want only sequence 2", events)
+	}
+	sequence, err := localStore.LastExecutionEventSequence(ctx, meta.ID)
+	if err != nil || sequence != 2 {
+		t.Fatalf("last sequence = %d, err=%v, want 2", sequence, err)
+	}
+}
+
 func TestStoreReadsLargeMessageLines(t *testing.T) {
 	ctx := context.Background()
 	localStore := New(t.TempDir())

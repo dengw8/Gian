@@ -28,10 +28,13 @@ type TraceLink struct {
 // TraceDiagnostics describes the best-effort observer's ability to retain a
 // complete trace. It is deliberately separate from individual span state.
 type TraceDiagnostics struct {
-	Complete       bool   `json:"complete"`
-	DroppedUpdates uint64 `json:"dropped_updates,omitempty"`
-	LastError      string `json:"last_error,omitempty"`
-	Pending        int    `json:"pending,omitempty"`
+	Complete          bool   `json:"complete"`
+	DroppedUpdates    uint64 `json:"dropped_updates,omitempty"`
+	TruncatedEvents   uint64 `json:"truncated_events,omitempty"`
+	LastError         string `json:"last_error,omitempty"`
+	Pending           int    `json:"pending,omitempty"`
+	PersistedSequence int64  `json:"persisted_sequence,omitempty"`
+	ProjectedSequence int64  `json:"projected_sequence,omitempty"`
 }
 
 type TraceSpanStatus string

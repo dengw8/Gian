@@ -30,6 +30,7 @@ type Config struct {
 	Runner        *agent.Runner
 	Store         store.RunStore
 	TraceStore    store.TraceStore
+	EventStore    store.ExecutionEventStore
 	TraceObserver runtime.ExecutionObserver
 	ModelProvider string
 }
@@ -39,6 +40,7 @@ type Server struct {
 	store         store.RunStore
 	modelProvider string
 	traceStore    store.TraceStore
+	eventStore    store.ExecutionEventStore
 	traceObserver runtime.ExecutionObserver
 }
 
@@ -89,6 +91,14 @@ type traceSpanResponse struct {
 	Span runtime.TraceSpan `json:"span"`
 }
 
+type executionEventsResponse struct {
+	Available    bool                              `json:"available"`
+	Reason       string                            `json:"reason,omitempty"`
+	Events       []runtime.ExecutionEvent          `json:"events"`
+	NextSequence int64                             `json:"next_sequence"`
+	Diagnostics  runtime.ExecutionEventDiagnostics `json:"diagnostics"`
+}
+
 type traceComparison struct {
 	RunID       string              `json:"run_id"`
 	Status      store.RunStatus     `json:"status"`
@@ -132,6 +142,7 @@ func New(cfg Config) *Server {
 		store:         cfg.Store,
 		modelProvider: cfg.ModelProvider,
 		traceStore:    cfg.TraceStore,
+		eventStore:    cfg.EventStore,
 		traceObserver: cfg.TraceObserver,
 	}
 }
@@ -153,6 +164,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/runs/{runID}", s.handleGetRun)
 	mux.HandleFunc("GET /v1/runs/{runID}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /v1/runs/{runID}/events", s.handleListEvents)
+	mux.HandleFunc("GET /v1/runs/{runID}/execution-events", s.handleListExecutionEvents)
+	mux.HandleFunc("GET /v1/runs/{runID}/execution-events/stream", s.handleStreamExecutionEvents)
 	mux.HandleFunc("GET /v1/runs/{runID}/model-logs", s.handleListModelLogs)
 	mux.HandleFunc("GET /v1/runs/{runID}/trace", s.handleGetTrace)
 	mux.HandleFunc("GET /v1/runs/{runID}/trace/spans/{spanID}", s.handleGetTraceSpan)
@@ -815,6 +828,116 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, events)
 }
 
+func (s *Server) handleListExecutionEvents(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("runID")
+	if _, err := s.store.GetRun(r.Context(), runID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if s.eventStore == nil {
+		writeJSON(w, http.StatusOK, executionEventsResponse{Available: false, Reason: "execution events are disabled or unavailable", Events: []runtime.ExecutionEvent{}, Diagnostics: s.executionEventDiagnostics(runID)})
+		return
+	}
+	afterSequence, err := parseExecutionSequence(r.URL.Query().Get("after_sequence"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	limit := executionEventsLimit(r)
+	events, err := s.eventStore.ListExecutionEvents(r.Context(), runID, afterSequence, limit)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	next := afterSequence
+	for _, event := range events {
+		if event.Sequence > next {
+			next = event.Sequence
+		}
+	}
+	writeJSON(w, http.StatusOK, executionEventsResponse{Available: true, Events: events, NextSequence: next, Diagnostics: s.executionEventDiagnostics(runID)})
+}
+
+func (s *Server) handleStreamExecutionEvents(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("runID")
+	if _, err := s.store.GetRun(r.Context(), runID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if s.eventStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "execution events are disabled or unavailable"})
+		return
+	}
+	afterSequence, err := parseExecutionSequence(r.URL.Query().Get("after_sequence"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	stream, ok := newSSEStream(w)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "streaming is not supported"})
+		return
+	}
+	var updates <-chan runtime.ExecutionEvent
+	cancel := func() {}
+	if subscriber, ok := s.traceObserver.(runtime.ExecutionEventSubscriber); ok {
+		updates, cancel = subscriber.SubscribeExecutionEvents(runID)
+	}
+	defer cancel()
+	events, err := s.eventStore.ListExecutionEvents(r.Context(), runID, afterSequence, 1000)
+	if err != nil {
+		return
+	}
+	for _, event := range events {
+		if err := stream.writeExecutionEvent(event); err != nil {
+			return
+		}
+		afterSequence = event.Sequence
+	}
+	if updates == nil {
+		return
+	}
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event, ok := <-updates:
+			if !ok {
+				return
+			}
+			if event.Sequence <= afterSequence {
+				continue
+			}
+			if err := stream.writeExecutionEvent(event); err != nil {
+				return
+			}
+			afterSequence = event.Sequence
+		}
+	}
+}
+
+func parseExecutionSequence(value string) (int64, error) {
+	if value == "" {
+		return 0, nil
+	}
+	sequence, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || sequence < 0 {
+		return 0, errors.New("after_sequence must be a non-negative integer")
+	}
+	return sequence, nil
+}
+
+func executionEventsLimit(r *http.Request) int {
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil || limit <= 0 {
+		return 200
+	}
+	if limit > 1000 {
+		return 1000
+	}
+	return limit
+}
+
 func (s *Server) handleListModelLogs(w http.ResponseWriter, r *http.Request) {
 	logs, err := s.store.ListModelLogs(r.Context(), r.PathValue("runID"))
 	if err != nil {
@@ -841,7 +964,7 @@ func (s *Server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(spans) == 0 {
-		writeJSON(w, http.StatusOK, traceResponse{Available: false, Reason: "trace was not collected for this run", Spans: spans, Diagnostics: s.traceDiagnostics()})
+		writeJSON(w, http.StatusOK, traceResponse{Available: false, Reason: "trace was not collected for this run", Spans: spans, Diagnostics: s.traceDiagnostics(runID)})
 		return
 	}
 	for i := range spans {
@@ -875,7 +998,7 @@ func (s *Server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
 		hidden = len(spans) - limit
 		spans = spans[:limit]
 	}
-	writeJSON(w, http.StatusOK, traceResponse{Available: true, Spans: spans, Diagnostics: s.traceDiagnostics(), TotalSpans: total, HiddenSpans: hidden, FilterActive: filterActive})
+	writeJSON(w, http.StatusOK, traceResponse{Available: true, Spans: spans, Diagnostics: s.traceDiagnostics(runID), TotalSpans: total, HiddenSpans: hidden, FilterActive: filterActive})
 }
 
 func (s *Server) handleGetTraceSpan(w http.ResponseWriter, r *http.Request) {
@@ -950,13 +1073,31 @@ func (s *Server) traceComparison(ctx context.Context, runID string) (traceCompar
 	return comparison, nil
 }
 
-func (s *Server) traceDiagnostics() runtime.TraceDiagnostics {
+func (s *Server) traceDiagnostics(runID string) runtime.TraceDiagnostics {
+	if provider, ok := s.traceObserver.(interface {
+		DiagnosticsForRun(string) runtime.TraceDiagnostics
+	}); ok {
+		return provider.DiagnosticsForRun(runID)
+	}
 	if provider, ok := s.traceObserver.(interface {
 		Diagnostics() runtime.TraceDiagnostics
 	}); ok {
 		return provider.Diagnostics()
 	}
 	return runtime.TraceDiagnostics{Complete: true}
+}
+
+func (s *Server) executionEventDiagnostics(runID string) runtime.ExecutionEventDiagnostics {
+	diagnostics := s.traceDiagnostics(runID)
+	return runtime.ExecutionEventDiagnostics{
+		Complete:          diagnostics.Complete,
+		DroppedEvents:     diagnostics.DroppedUpdates,
+		TruncatedEvents:   diagnostics.TruncatedEvents,
+		LastError:         diagnostics.LastError,
+		Pending:           diagnostics.Pending,
+		PersistedSequence: diagnostics.PersistedSequence,
+		ProjectedSequence: diagnostics.ProjectedSequence,
+	}
 }
 
 func filterTraceSpans(spans []runtime.TraceSpan, r *http.Request) ([]runtime.TraceSpan, bool) {
@@ -1386,6 +1527,21 @@ func (s *sseStream) write(event runtime.Event) error {
 		}
 	}
 	if _, err := fmt.Fprintf(s.writer, "event: %s\ndata: %s\n\n", event.Type, data); err != nil {
+		return err
+	}
+	if err := s.writer.Flush(); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
+
+func (s *sseStream) writeExecutionEvent(event runtime.ExecutionEvent) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(s.writer, "id: %d\nevent: %s\ndata: %s\n\n", event.Sequence, event.Type, data); err != nil {
 		return err
 	}
 	if err := s.writer.Flush(); err != nil {

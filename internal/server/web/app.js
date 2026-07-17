@@ -11,6 +11,11 @@ const state = {
 	traceDetailTab: "run",
 	traceBlockModes: {},
 	traceView: "tree",
+	traceEvents: { available: false, events: [], nextSequence: 0, diagnostics: null, status: "idle" },
+	traceEventSelection: null,
+	traceEventSequences: new Set(),
+	traceEventSource: null,
+	traceEventRetry: null,
 	traceFilters: { q: "", kind: "", status: "", limit: 120 },
 	traceExpanded: new Set(),
 	traceExpansionInitialized: false,
@@ -62,6 +67,7 @@ const el = {
 	refreshTraceButton: document.querySelector("#refreshTraceButton"),
 	traceTreeViewButton: document.querySelector("#traceTreeViewButton"),
 	traceChatViewButton: document.querySelector("#traceChatViewButton"),
+	traceEventsViewButton: document.querySelector("#traceEventsViewButton"),
 	traceSearchInput: document.querySelector("#traceSearchInput"),
 	traceKindFilter: document.querySelector("#traceKindFilter"),
 	traceStatusFilter: document.querySelector("#traceStatusFilter"),
@@ -108,9 +114,10 @@ function bindEvents() {
 	el.messagesPageButton.addEventListener("click", () => setPage("messages", true));
 	el.tracePageButton.addEventListener("click", () => setPage("trace", true));
   el.refreshRunButton.addEventListener("click", refreshRunMetadata);
-	el.refreshTraceButton.addEventListener("click", refreshTrace);
+	el.refreshTraceButton.addEventListener("click", () => state.traceView === "events" ? refreshTraceEvents() : refreshTrace());
 	el.traceTreeViewButton.addEventListener("click", () => setTraceView("tree"));
 	el.traceChatViewButton.addEventListener("click", () => setTraceView("chat"));
+	el.traceEventsViewButton.addEventListener("click", () => setTraceView("events"));
 	el.traceLoadMoreButton.addEventListener("click", () => { state.traceFilters.limit += 120; refreshTrace(); });
 	[el.traceSearchInput, el.traceKindFilter, el.traceStatusFilter].forEach((control) => control.addEventListener("change", refreshTrace));
 	el.traceSearchInput.addEventListener("search", refreshTrace);
@@ -334,6 +341,85 @@ async function refreshTrace() {
 	renderTrace();
 }
 
+async function refreshTraceEvents() {
+	if (!state.currentRunId) {
+		state.traceEvents = { available: false, events: [], nextSequence: 0, diagnostics: null, status: "idle" };
+		state.traceEventSequences = new Set();
+		renderTrace();
+		return;
+	}
+	stopTraceEventStream();
+	state.traceEvents.status = "loading";
+	renderTrace();
+	try {
+		const data = await requestJSON(`/v1/runs/${encodeURIComponent(state.currentRunId)}/execution-events?after_sequence=0&limit=1000`, { method: "GET" });
+		state.traceEvents = { ...(data || {}), events: [], nextSequence: data?.next_sequence || 0, status: "ready" };
+		state.traceEventSequences = new Set();
+		(data?.events || []).forEach(appendTraceEvent);
+		state.traceEvents.status = "live";
+		connectTraceEventStream();
+	} catch (error) {
+		state.traceEvents.status = "error";
+		toast(`Execution event load failed: ${error.message}`);
+	}
+	renderTrace();
+}
+
+const traceExecutionEventTypes = [
+	"run.started", "run.completed", "run.failed", "turn.started", "turn.completed", "turn.failed",
+	"iteration.started", "iteration.completed", "model.started", "model.text", "model.tool_call",
+	"model.completed", "model.failed", "tool.started", "tool.completed", "tool.failed",
+	"approval.requested", "approval.resolved", "error",
+];
+
+function connectTraceEventStream() {
+	if (state.page !== "trace" || state.traceView !== "events" || !state.currentRunId || !state.traceEvents?.available) return;
+	stopTraceEventStream(false);
+	const runID = state.currentRunId;
+	const source = new EventSource(apiURL(`/v1/runs/${encodeURIComponent(runID)}/execution-events/stream?after_sequence=${state.traceEvents.nextSequence || 0}`));
+	state.traceEventSource = source;
+	traceExecutionEventTypes.forEach((type) => source.addEventListener(type, (message) => {
+		try {
+			if (state.currentRunId !== runID) return;
+			appendTraceEvent(JSON.parse(message.data));
+			if (state.traceView === "events") renderTrace();
+		} catch (error) {
+			toast(`Invalid execution event: ${error.message}`);
+		}
+	}));
+	source.onerror = () => {
+		if (state.traceEventSource !== source) return;
+		stopTraceEventStream(false);
+		if (state.page !== "trace" || state.traceView !== "events" || state.currentRunId !== runID) return;
+		state.traceEvents.status = "reconnecting";
+		renderTrace();
+		state.traceEventRetry = window.setTimeout(() => {
+			state.traceEventRetry = null;
+			connectTraceEventStream();
+		}, 1200);
+	};
+}
+
+function stopTraceEventStream(clearStatus = true) {
+	if (state.traceEventRetry) {
+		window.clearTimeout(state.traceEventRetry);
+		state.traceEventRetry = null;
+	}
+	if (state.traceEventSource) {
+		state.traceEventSource.close();
+		state.traceEventSource = null;
+	}
+	if (clearStatus && state.traceEvents?.status === "live") state.traceEvents.status = "ready";
+}
+
+function appendTraceEvent(event) {
+	if (!event || typeof event.sequence !== "number" || state.traceEventSequences.has(event.sequence)) return;
+	state.traceEventSequences.add(event.sequence);
+	state.traceEvents.events.push(event);
+	state.traceEvents.events.sort((left, right) => left.sequence - right.sequence);
+	state.traceEvents.nextSequence = Math.max(state.traceEvents.nextSequence || 0, event.sequence);
+}
+
 function readRunRoute() {
 	const match = window.location.pathname.match(/^\/app\/runs\/([^/]+)\/(messages|trace)$/);
 	return match ? { runId: decodeURIComponent(match[1]), page: match[2] } : { runId: "", page: "messages" };
@@ -348,7 +434,12 @@ function setPage(page, push) {
 	el.messagesPageButton.classList.toggle("active", !trace);
 	el.tracePageButton.classList.toggle("active", trace);
 	if (push && state.currentRunId) updateRunRoute();
-	if (trace) refreshTrace().catch((error) => toast(`Trace refresh failed: ${error.message}`));
+	if (trace) {
+		const refresh = state.traceView === "events" ? refreshTraceEvents() : refreshTrace();
+		refresh.catch((error) => toast(`Trace refresh failed: ${error.message}`));
+	} else {
+		stopTraceEventStream();
+	}
 }
 
 function updateRunRoute() {
@@ -371,6 +462,11 @@ function renderTrace() {
 		el.traceTree.textContent = "Select a run to inspect its execution trace.";
 		el.traceDetails.classList.add("empty-state");
 		el.traceDetails.textContent = "Select a trace node to inspect its details.";
+		return;
+	}
+	if (state.traceView === "events") {
+		el.copyTraceSpanButton.disabled = true;
+		renderTraceEvents();
 		return;
 	}
 	if (!state.trace?.available) {
@@ -485,10 +581,127 @@ function renderTraceIntegrity() {
 }
 
 function setTraceView(view) {
-	state.traceView = view === "chat" ? "chat" : "tree";
+	state.traceView = ["tree", "chat", "events"].includes(view) ? view : "tree";
 	el.traceTreeViewButton.classList.toggle("active", state.traceView === "tree");
 	el.traceChatViewButton.classList.toggle("active", state.traceView === "chat");
+	el.traceEventsViewButton.classList.toggle("active", state.traceView === "events");
+	if (state.traceView === "events") {
+		refreshTraceEvents();
+	} else {
+		stopTraceEventStream();
+	}
 	renderTrace();
+}
+
+function renderTraceEvents() {
+	const timeline = state.traceEvents;
+	if (!timeline?.available && timeline?.status !== "loading") {
+		el.traceTree.classList.add("empty-state");
+		el.traceTree.textContent = timeline?.reason || "Execution events were not collected for this run.";
+		el.traceDetails.classList.add("empty-state");
+		el.traceDetails.textContent = "Select an execution event to inspect its details.";
+		return;
+	}
+	if (timeline.status === "loading") {
+		el.traceTree.classList.add("empty-state");
+		el.traceTree.textContent = "Loading execution events…";
+		return;
+	}
+	const status = document.createElement("div");
+	status.className = `trace-event-connection ${timeline.status || "ready"}`;
+	status.textContent = traceEventConnectionLabel(timeline.status);
+	el.traceTree.append(status);
+	const events = timeline.events || [];
+	if (!events.length) {
+		const empty = document.createElement("div");
+		empty.className = "empty-state";
+		empty.textContent = "No execution events have been recorded for this run.";
+		el.traceTree.append(empty);
+	} else {
+		const groups = new Map();
+		events.forEach((event) => {
+			const key = `${event.turn_id || "run"}:${event.iteration || 0}`;
+			if (!groups.has(key)) groups.set(key, []);
+			groups.get(key).push(event);
+		});
+		groups.forEach((items, key) => renderTraceEventGroup(el.traceTree, key, items));
+	}
+	const selected = events.find((event) => event.sequence === state.traceEventSelection);
+	if (selected) renderTraceEventDetails(selected);
+	else {
+		el.traceDetails.classList.add("empty-state");
+		el.traceDetails.textContent = "Select an execution event to inspect its details.";
+	}
+}
+
+function traceEventConnectionLabel(status) {
+	if (status === "live") return "Live · receiving persisted execution events";
+	if (status === "reconnecting") return "Reconnecting from the last sequence…";
+	if (status === "error") return "Event replay failed. You can refresh to retry.";
+	return "Historical replay loaded";
+}
+
+function renderTraceEventGroup(parent, key, events) {
+	const section = document.createElement("section");
+	section.className = "trace-event-group";
+	const heading = document.createElement("h3");
+	const first = events[0];
+	heading.textContent = first.turn_id ? `Turn ${first.turn_id.slice(-8)}${first.iteration ? ` · iteration ${first.iteration}` : ""}` : "Run events";
+	section.append(heading);
+	events.forEach((event) => {
+		const row = document.createElement("button");
+		row.type = "button";
+		row.className = `trace-event-row trace-${event.status || "running"}`;
+		row.classList.toggle("selected", state.traceEventSelection === event.sequence);
+		row.innerHTML = `<span class="trace-event-sequence">#${event.sequence}</span><span class="trace-kind">${escapeHTML(event.type || "event")}</span><span class="trace-event-summary">${escapeHTML(traceEventSummary(event))}</span><span class="trace-event-time">${escapeHTML(formatDate(event.occurred_at))}</span>`;
+		row.addEventListener("click", () => selectTraceEvent(event.sequence));
+		section.append(row);
+	});
+	parent.append(section);
+}
+
+function traceEventSummary(event) {
+	const payload = parseTracePayload(event.payload);
+	if (event.error) return event.error;
+	if (event.type === "model.text") return payload?.delta || "Model output";
+	if (event.type === "model.tool_call") return payload?.name ? `Tool call: ${payload.name}` : "Model requested a tool";
+	if (payload?.span?.name) return payload.span.name;
+	if (payload?.decision) return `Decision: ${payload.decision}`;
+	return event.status || "Execution event";
+}
+
+function selectTraceEvent(sequence) {
+	state.traceEventSelection = sequence;
+	renderTrace();
+}
+
+function renderTraceEventDetails(event) {
+	el.traceDetails.classList.remove("empty-state");
+	const content = document.createElement("div");
+	content.className = "trace-detail-content";
+	const heading = document.createElement("h3");
+	heading.textContent = event.type || "Execution event";
+	content.append(heading);
+	if (event.span_id) {
+		const locate = document.createElement("button");
+		locate.type = "button";
+		locate.className = "trace-event-span-link";
+		locate.textContent = "View related span";
+		locate.addEventListener("click", async () => {
+			setTraceView("tree");
+			await selectTraceSpan(event.span_id);
+		});
+		content.append(locate);
+	}
+	renderTraceBlock(content, { id: `event_${event.sequence}` }, "Event JSON", event);
+	const summary = document.createElement("aside");
+	summary.className = "trace-span-summary";
+	[["Sequence", String(event.sequence)], ["Status", event.status || "-"], ["Turn", event.turn_id || "-"], ["Iteration", event.iteration || "-"], ["Time", formatDate(event.occurred_at)], ["Span ID", event.span_id || "-"], ["Error", event.error || "-"]].forEach(([label, value]) => {
+		const row = document.createElement("div");
+		row.innerHTML = `<span>${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong>`;
+		summary.append(row);
+	});
+	el.traceDetails.append(content, summary);
 }
 
 function renderTraceChat(spans) {
@@ -579,6 +792,7 @@ function renderTraceDetails(span) {
 		const metadata = { id: span.id, parent_id: span.parent_id, run_id: span.run_id, turn_id: span.turn_id, kind: span.kind, component: span.component, name: span.name, status: span.status, revision: span.revision, sequence: span.sequence, started_at: span.started_at, completed_at: span.completed_at, duration_ms: span.duration_ms, model_call_id: span.model_call_id, tool_call_id: span.tool_call_id, links: span.links, usage: span.usage, error: span.error, attributes: metadataAttributes };
 		renderTraceBlock(content, span, "Metadata", metadata);
 		renderTraceBlock(content, span, "Runtime", runtime || {});
+		renderRelatedExecutionEvents(content, span);
 		el.traceDetails.append(content, summary);
 		return;
 	}
@@ -592,6 +806,7 @@ function renderTraceDetails(span) {
 				renderTraceBlock(content, span, "User prompt", input.user_prompt);
 			}
 			renderTraceBlock(content, span, "Output", span.output || []);
+			renderRelatedExecutionEvents(content, span);
 			el.traceDetails.append(content, summary);
 			return;
 		}
@@ -611,7 +826,43 @@ function renderTraceDetails(span) {
 		renderTraceBlock(content, span, "Output", span.output || {});
 		renderTraceLinks(content, span);
 	}
+	renderRelatedExecutionEvents(content, span);
 	el.traceDetails.append(content, summary);
+}
+
+function renderRelatedExecutionEvents(parent, span) {
+	const matches = (event) => event.span_id === span.id || (span.model_call_id && event.model_call_id === span.model_call_id) || (span.tool_call_id && event.tool_call_id === span.tool_call_id);
+	const events = (state.traceEvents?.events || []).filter(matches);
+	const section = document.createElement("section");
+	section.className = "trace-links";
+	const heading = document.createElement("h3");
+	heading.textContent = "Related execution events";
+	section.append(heading);
+	if (!events.length) {
+		const load = document.createElement("button");
+		load.type = "button";
+		load.textContent = "Load related events";
+		load.addEventListener("click", async () => {
+			await refreshTraceEvents();
+			const related = (state.traceEvents.events || []).find(matches);
+			setTraceView("events");
+			if (related) state.traceEventSelection = related.sequence;
+			renderTrace();
+		});
+		section.append(load);
+	} else {
+		events.forEach((event) => {
+			const button = document.createElement("button");
+			button.type = "button";
+			button.textContent = `#${event.sequence} ${event.type}`;
+			button.addEventListener("click", () => {
+				state.traceEventSelection = event.sequence;
+				setTraceView("events");
+			});
+			section.append(button);
+		});
+	}
+	parent.append(section);
 }
 
 async function setTraceDetailTab(tab) {
@@ -1038,9 +1289,13 @@ function handleStreamEvent(event) {
 
 function selectRun(run) {
 	if (state.currentRunId !== run.id) {
+		stopTraceEventStream();
 		state.traceExpanded = new Set();
 		state.traceExpansionInitialized = false;
 		state.traceSelection = null;
+		state.traceEventSelection = null;
+		state.traceEvents = { available: false, events: [], nextSequence: 0, diagnostics: null, status: "idle" };
+		state.traceEventSequences = new Set();
 	}
 	state.currentRunId = run.id;
   el.currentRunId.textContent = run.id;

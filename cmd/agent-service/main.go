@@ -65,15 +65,18 @@ func main() {
 		}
 	}()
 	var traceStore store.TraceStore
+	var executionEventStore store.ExecutionEventStore
 	var traceObserver *traceplugin.Observer
 	if cfg.Trace.Enabled {
-		var ok bool
-		traceStore, ok = runStore.(store.TraceStore)
-		if !ok {
-			log.Printf("trace is disabled: configured run store does not implement TraceStore")
+		var traceOK, eventOK bool
+		traceStore, traceOK = runStore.(store.TraceStore)
+		executionEventStore, eventOK = runStore.(store.ExecutionEventStore)
+		if !traceOK || !eventOK {
+			log.Printf("trace is disabled: configured run store does not implement TraceStore and ExecutionEventStore")
 			traceStore = nil
+			executionEventStore = nil
 		} else {
-			traceObserver = traceplugin.NewObserver(traceStore)
+			traceObserver = traceplugin.NewObserver(traceStore, executionEventStore)
 			defer traceObserver.Close()
 		}
 	}
@@ -85,6 +88,7 @@ func main() {
 		Runner:        runner,
 		Store:         runStore,
 		TraceStore:    traceStore,
+		EventStore:    executionEventStore,
 		TraceObserver: traceObserver,
 		ModelProvider: cfg.Model.Provider,
 	})

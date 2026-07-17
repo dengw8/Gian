@@ -412,11 +412,15 @@ trace:
   enabled: true
 ```
 
-It records an asynchronous `Run → Turn → model/tool/approval` tree in
-`trace.jsonl` for local storage (or `agent_trace_spans` in MySQL). Trace writes
-never block or fail a Run; a slow or failed observer can leave an incomplete
-tree. Trace payloads redact common credential fields and omit attachment binary
-data. Existing Runs are not backfilled.
+The observer first records a versioned, ordered execution-event stream in
+`execution_events.jsonl` for local storage (or `agent_execution_events` in
+MySQL), then asynchronously projects `Run → Turn → model/tool/approval` spans
+to `trace.jsonl` (or `agent_trace_spans`). It captures Run/Turn boundaries,
+ReAct iterations, model lifecycle/text/tool-call events, tool results, approval
+decisions and failures. Event and Trace writes never block or fail a Run; a
+slow or failed observer can leave incomplete data. Payloads redact common
+credential fields, omit attachment binary data, and cap streamed text event
+size. Existing Runs are not backfilled.
 
 The root Run span measures the active agent execution slice rather than time
 spent waiting for the next user message. Shell approval waiting time is shown
@@ -429,6 +433,7 @@ Trace uses two complementary views:
 
 - **Tree** shows execution containment: `Run → Turn (graph) → model/tool/approval`.
 - **Chat** projects the same spans into user/model/tool-result order. Model tool calls and tool spans are linked by the stable tool-call ID; a tool result is also linked to the next model call that consumes it.
+- **Events** replays the canonical execution-event stream and, while this view is open, subscribes to its SSE endpoint. It groups events by Turn/iteration, deduplicates by `sequence`, reconnects from the latest sequence, and can locate the related Span. Tree and Chat remain manually refreshed.
 
 The Trace page supports type/state/text filtering, a bounded “show more” flow
 for large Runs, span-level raw JSON copying, type-specific Run details,
@@ -438,13 +443,20 @@ field is false, the in-process observer dropped updates or encountered a write
 error, so the tree is useful for debugging but is not an audit record.
 
 Trace payloads are intentionally best-effort and are not backfilled. The API
-also exposes individual spans and comparisons:
+also exposes canonical event replay, individual spans and comparisons:
 
 ```text
 GET  /v1/runs/<run_id>/trace?kind=tool&status=failed&q=shell&limit=120
 GET  /v1/runs/<run_id>/trace/spans/<span_id>
 GET  /v1/runs/<run_id>/trace/compare/<other_run_id>
+GET  /v1/runs/<run_id>/execution-events?after_sequence=0&limit=200
+GET  /v1/runs/<run_id>/execution-events/stream?after_sequence=0
 ```
+
+`after_sequence` is a Run-local cursor. The HTTP endpoint returns ordered
+events and `next_sequence`; the SSE endpoint first replays persisted events
+after that cursor and then sends live persisted events. A dropped live update
+can therefore be recovered by reconnecting with the last processed sequence.
 
 ### MySQL Store
 
@@ -470,6 +482,7 @@ selected database:
 
 - [`migrations/mysql/001_create_agent_store.sql`](migrations/mysql/001_create_agent_store.sql)
 - [`migrations/mysql/003_add_trace_spans.sql`](migrations/mysql/003_add_trace_spans.sql)
+- [`migrations/mysql/004_add_execution_events.sql`](migrations/mysql/004_add_execution_events.sql)
 
 The service only pings MySQL and verifies that the
 required tables exist; it never runs migrations or other DDL. Switching

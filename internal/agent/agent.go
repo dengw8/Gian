@@ -136,6 +136,7 @@ func (r *Runner) ResumeTurn(ctx context.Context, input ResumeInput) (TurnOutput,
 	}
 	newMessageStart := len(state.Messages)
 	recorder := newTurnRecorder(input.Events, r.traceObserver, input.RunID, input.TurnID, false)
+	recorder.iteration = input.Approval.Iteration
 	if err := r.beforeAgent(ctx, state); err != nil {
 		return TurnOutput{}, err
 	}
@@ -192,6 +193,9 @@ func (r *Runner) ResumeTurn(ctx context.Context, input ResumeInput) (TurnOutput,
 	if pending != nil {
 		return r.turnOutput(state, newMessageStart, recorder, pending), nil
 	}
+	if recorder.iteration > 0 {
+		recorder.publish(runtime.ExecutionEvent{RunID: recorder.runID, TurnID: recorder.turnID, Iteration: recorder.iteration, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventIterationCompleted, Status: runtime.TraceStatusSucceeded, SpanID: runtime.TraceTurnSpanID(recorder.turnID), ParentSpanID: runtime.TraceRunSpanID(recorder.runID)})
+	}
 	return r.runModelLoop(ctx, state, newMessageStart, recorder)
 }
 
@@ -203,6 +207,7 @@ type turnRecorder struct {
 	streamModelOutput bool
 	traceObserver     runtime.ExecutionObserver
 	runID             string
+	iteration         int
 	traceSequence     int
 	spanSequences     map[string]int
 }
@@ -226,12 +231,23 @@ func (r *turnRecorder) emit(event runtime.Event) error {
 		event.TurnID = r.turnID
 	}
 	r.events = append(r.events, event)
+	if event.Type == "model_output_delta" {
+		r.publish(runtime.ExecutionEvent{RunID: r.runID, TurnID: r.turnID, Iteration: r.iteration, OccurredAt: event.CreatedAt, Type: runtime.ExecutionEventModelText, ModelCallID: event.ModelCallID, Payload: traceJSON(event.Data)})
+	}
 	return emit(r.sink, event)
+}
+
+func (r *turnRecorder) publish(event runtime.ExecutionEvent) {
+	if publisher, ok := r.traceObserver.(runtime.ExecutionEventPublisher); ok {
+		publisher.PublishExecutionEvent(context.Background(), event)
+	}
 }
 
 func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart int, recorder *turnRecorder) (TurnOutput, error) {
 
 	for i := 0; i < r.maxIterations; i++ {
+		recorder.iteration = i + 1
+		recorder.publish(runtime.ExecutionEvent{RunID: recorder.runID, TurnID: recorder.turnID, Iteration: recorder.iteration, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventIterationStarted, Status: runtime.TraceStatusRunning, SpanID: runtime.TraceTurnSpanID(recorder.turnID), ParentSpanID: runtime.TraceRunSpanID(recorder.runID)})
 		toolDefinitions := r.toolDefinitions()
 		if state.Plan.Mode == runtime.PlanModePlanning {
 			toolDefinitions = planningTools(toolDefinitions)
@@ -303,6 +319,9 @@ func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart
 		if err := recorder.emit(modelCompletedEvent(modelCallID, resp.Usage)); err != nil {
 			return TurnOutput{}, err
 		}
+		for _, call := range resp.Message.ToolCalls {
+			recorder.publish(runtime.ExecutionEvent{RunID: recorder.runID, TurnID: recorder.turnID, Iteration: recorder.iteration, OccurredAt: modelLog.CompletedAt, Type: runtime.ExecutionEventModelToolCall, Status: runtime.TraceStatusSucceeded, SpanID: modelSpanID, ParentSpanID: runtime.TraceTurnSpanID(recorder.turnID), ModelCallID: modelCallID, ToolCallID: call.ID, Payload: traceJSON(call)})
+		}
 		if err := r.afterModel(ctx, &resp, state); err != nil {
 			return TurnOutput{}, err
 		}
@@ -313,6 +332,7 @@ func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart
 			return TurnOutput{}, err
 		}
 		if len(resp.Message.ToolCalls) == 0 {
+			recorder.publish(runtime.ExecutionEvent{RunID: recorder.runID, TurnID: recorder.turnID, Iteration: recorder.iteration, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventIterationCompleted, Status: runtime.TraceStatusSucceeded, SpanID: runtime.TraceTurnSpanID(recorder.turnID), ParentSpanID: runtime.TraceRunSpanID(recorder.runID)})
 			return r.turnOutput(state, newMessageStart, recorder, nil), nil
 		}
 		pending, err := r.runToolCalls(ctx, resp.Message.ToolCalls, state, recorder, modelCallID)
@@ -322,6 +342,7 @@ func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart
 		if pending != nil {
 			return r.turnOutput(state, newMessageStart, recorder, pending), nil
 		}
+		recorder.publish(runtime.ExecutionEvent{RunID: recorder.runID, TurnID: recorder.turnID, Iteration: recorder.iteration, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventIterationCompleted, Status: runtime.TraceStatusSucceeded, SpanID: runtime.TraceTurnSpanID(recorder.turnID), ParentSpanID: runtime.TraceRunSpanID(recorder.runID)})
 	}
 
 	return r.turnOutput(state, newMessageStart, recorder, nil), errors.New("agent turn exceeded max iterations")
@@ -338,6 +359,7 @@ func (r *Runner) runToolCalls(ctx context.Context, calls []runtime.ToolCall, sta
 		result, pending := r.executeTool(ctx, call, state)
 		if pending != nil {
 			pending.RemainingToolCalls = append([]runtime.ToolCall(nil), calls[i+1:]...)
+			pending.Iteration = recorder.iteration
 			if err := recorder.emit(toolEvent("approval_required", "Shell approval required", call.ID)); err != nil {
 				return nil, err
 			}
@@ -363,6 +385,12 @@ func (r *Runner) observeTrace(ctx context.Context, recorder *turnRecorder, span 
 	if recorder.traceObserver == nil || span.RunID == "" {
 		return
 	}
+	attributes := make(map[string]any, len(span.Attributes)+1)
+	for key, value := range span.Attributes {
+		attributes[key] = value
+	}
+	attributes["iteration"] = recorder.iteration
+	span.Attributes = attributes
 	recorder.traceObserver.Observe(ctx, span)
 }
 

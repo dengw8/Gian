@@ -34,6 +34,7 @@ var requiredTables = []string{
 	"agent_model_logs",
 	"agent_run_states",
 	"agent_trace_spans",
+	"agent_execution_events",
 }
 
 type Config struct {
@@ -591,6 +592,59 @@ func (s *Store) ListEvents(ctx context.Context, runID string) ([]runtime.Event, 
 		events = append(events, event)
 	}
 	return events, nil
+}
+
+func (s *Store) AppendExecutionEvent(ctx context.Context, event runtime.ExecutionEvent) error {
+	if err := s.requireRun(ctx, event.RunID); err != nil {
+		return err
+	}
+	if event.ID == "" || event.Sequence <= 0 {
+		return errors.New("execution event id and sequence are required")
+	}
+	payload, err := marshalValue(event)
+	if err != nil {
+		return err
+	}
+	record := executionEventRecord{RunID: event.RunID, Sequence: event.Sequence, Payload: payload}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&record).Error
+}
+
+func (s *Store) ListExecutionEvents(ctx context.Context, runID string, afterSequence int64, limit int) ([]runtime.ExecutionEvent, error) {
+	if err := s.requireRun(ctx, runID); err != nil {
+		return nil, err
+	}
+	query := s.db.WithContext(ctx).Where("run_id = ? AND sequence > ?", runID, afterSequence).Order("sequence ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var records []executionEventRecord
+	if err := query.Find(&records).Error; err != nil {
+		return nil, err
+	}
+	events := make([]runtime.ExecutionEvent, 0, len(records))
+	for _, record := range records {
+		var event runtime.ExecutionEvent
+		if err := json.Unmarshal([]byte(record.Payload), &event); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, nil
+}
+
+func (s *Store) LastExecutionEventSequence(ctx context.Context, runID string) (int64, error) {
+	if err := s.requireRun(ctx, runID); err != nil {
+		return 0, err
+	}
+	var record executionEventRecord
+	err := s.db.WithContext(ctx).Where("run_id = ?", runID).Order("sequence DESC").First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return record.Sequence, nil
 }
 
 func (s *Store) AppendModelLogs(ctx context.Context, runID string, logs []runtime.ModelLog) error {

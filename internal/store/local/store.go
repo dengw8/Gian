@@ -439,6 +439,74 @@ func (s *Store) ListEvents(ctx context.Context, runID string) ([]runtime.Event, 
 	return readJSONLines[runtime.Event](s.eventsPath(runID))
 }
 
+func (s *Store) AppendExecutionEvent(ctx context.Context, event runtime.ExecutionEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateRunID(event.RunID); err != nil {
+		return err
+	}
+	if event.ID == "" || event.Sequence <= 0 {
+		return errors.New("execution event id and sequence are required")
+	}
+	if _, err := s.GetRun(ctx, event.RunID); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	events, err := readJSONLines[runtime.ExecutionEvent](s.executionEventsPath(event.RunID))
+	if err != nil {
+		return err
+	}
+	for _, existing := range events {
+		if existing.Sequence == event.Sequence {
+			return nil
+		}
+	}
+	return appendJSONLines(s.executionEventsPath(event.RunID), []runtime.ExecutionEvent{event})
+}
+
+func (s *Store) ListExecutionEvents(ctx context.Context, runID string, afterSequence int64, limit int) ([]runtime.ExecutionEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateRunID(runID); err != nil {
+		return nil, err
+	}
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return nil, err
+	}
+	events, err := readJSONLines[runtime.ExecutionEvent](s.executionEventsPath(runID))
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(events, func(i, j int) bool { return events[i].Sequence < events[j].Sequence })
+	filtered := make([]runtime.ExecutionEvent, 0, len(events))
+	for _, event := range events {
+		if event.Sequence > afterSequence {
+			filtered = append(filtered, event)
+			if limit > 0 && len(filtered) >= limit {
+				break
+			}
+		}
+	}
+	return filtered, nil
+}
+
+func (s *Store) LastExecutionEventSequence(ctx context.Context, runID string) (int64, error) {
+	events, err := s.ListExecutionEvents(ctx, runID, 0, 0)
+	if err != nil {
+		return 0, err
+	}
+	var sequence int64
+	for _, event := range events {
+		if event.Sequence > sequence {
+			sequence = event.Sequence
+		}
+	}
+	return sequence, nil
+}
+
 func (s *Store) AppendModelLogs(ctx context.Context, runID string, logs []runtime.ModelLog) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -531,6 +599,10 @@ func (s *Store) messagesPath(runID string) string {
 
 func (s *Store) eventsPath(runID string) string {
 	return filepath.Join(s.runDir(runID), "events.jsonl")
+}
+
+func (s *Store) executionEventsPath(runID string) string {
+	return filepath.Join(s.runDir(runID), "execution_events.jsonl")
 }
 
 func (s *Store) modelLogsPath(runID string) string {

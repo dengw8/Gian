@@ -131,6 +131,7 @@ type PendingShellApproval struct {
 	ScriptHash         string              `json:"script_hash"`
 	RemainingToolCalls []ToolCall          `json:"remaining_tool_calls,omitempty"`
 	TurnID             string              `json:"turn_id,omitempty"`
+	Iteration          int                 `json:"iteration,omitempty"`
 	RequestedAt        time.Time           `json:"requested_at"`
 	Status             ShellApprovalStatus `json:"status"`
 }

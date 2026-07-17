@@ -632,12 +632,55 @@ func TestRunnerTraceCapturesToolDataFlowAndFailure(t *testing.T) {
 	if len(secondModel.Links) != 1 || secondModel.Links[0].Type != "consumes_tool_result" || secondModel.Links[0].SpanID != tool.ID {
 		t.Fatalf("second model links = %#v", secondModel.Links)
 	}
+	if !collector.hasExecution(runtime.ExecutionEventIterationStarted) || !collector.hasExecution(runtime.ExecutionEventIterationCompleted) || !collector.hasExecution(runtime.ExecutionEventModelToolCall) {
+		t.Fatalf("execution events = %#v, want iteration and model tool-call events", collector.events)
+	}
+	if got := collector.iterations(runtime.ExecutionEventIterationStarted); !reflect.DeepEqual(got, []int{1, 2}) {
+		t.Fatalf("iteration starts = %#v, want [1 2]", got)
+	}
 }
 
-type traceCollector struct{ spans []runtime.TraceSpan }
+func TestRunnerPublishesStreamingModelTextEvent(t *testing.T) {
+	collector := &traceCollector{}
+	runner := NewRunner(Config{Model: model.NewFakeProvider(), TraceObserver: collector})
+	if _, err := runner.RunTurn(context.Background(), TurnInput{RunID: "run_stream", TurnID: "turn_stream", Message: "hello", StreamModelOutput: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !collector.hasExecution(runtime.ExecutionEventModelText) {
+		t.Fatalf("execution events = %#v, want model text event", collector.events)
+	}
+}
+
+type traceCollector struct {
+	spans  []runtime.TraceSpan
+	events []runtime.ExecutionEvent
+}
 
 func (c *traceCollector) Observe(_ context.Context, span runtime.TraceSpan) {
 	c.spans = append(c.spans, span)
+}
+
+func (c *traceCollector) PublishExecutionEvent(_ context.Context, event runtime.ExecutionEvent) {
+	c.events = append(c.events, event)
+}
+
+func (c *traceCollector) hasExecution(eventType runtime.ExecutionEventType) bool {
+	for _, event := range c.events {
+		if event.Type == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *traceCollector) iterations(eventType runtime.ExecutionEventType) []int {
+	iterations := []int{}
+	for _, event := range c.events {
+		if event.Type == eventType {
+			iterations = append(iterations, event.Iteration)
+		}
+	}
+	return iterations
 }
 
 func (c *traceCollector) latest(id string) runtime.TraceSpan {

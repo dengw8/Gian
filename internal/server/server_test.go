@@ -75,12 +75,13 @@ func TestCreateRunCompletesNoToolTurn(t *testing.T) {
 
 func TestTraceEndpointReturnsObservedRunTree(t *testing.T) {
 	runStore := local.New(t.TempDir())
-	observer := traceplugin.NewObserver(runStore)
+	observer := traceplugin.NewObserver(runStore, runStore)
 	t.Cleanup(observer.Close)
 	srv := New(Config{
 		Runner:        agent.NewRunner(agent.Config{Model: model.NewFakeProvider(), MaxIterations: 2, TraceObserver: observer}),
 		Store:         runStore,
 		TraceStore:    runStore,
+		EventStore:    runStore,
 		TraceObserver: observer,
 		ModelProvider: "fake",
 	})
@@ -117,6 +118,27 @@ func TestTraceEndpointReturnsObservedRunTree(t *testing.T) {
 	}
 	if !got.Available || len(got.Spans) < 3 {
 		t.Fatalf("trace = %#v, want available run/turn/model spans", got)
+	}
+	events, err := runStore.ListExecutionEvents(context.Background(), created.Run.ID, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[0].Sequence != 1 {
+		t.Fatalf("execution events = %#v, want ordered canonical events", events)
+	}
+	for _, span := range got.Spans {
+		if span.Kind == runtime.TraceSpanModel && span.ModelCallID != "" {
+			found := false
+			for _, event := range events {
+				if event.ModelCallID == span.ModelCallID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("model span %s has no source event", span.ID)
+			}
+		}
 	}
 	var firstTurn, laterTurn runtime.TraceSpan
 	for _, span := range got.Spans {
@@ -172,6 +194,93 @@ func TestTraceEndpointReturnsObservedRunTree(t *testing.T) {
 	if userPrompt.Content != "second" {
 		t.Fatalf("later user prompt = %#v, want second", userPrompt)
 	}
+}
+
+func TestExecutionEventsEndpointReplaysFromSequence(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	meta, err := runStore.CreateRun(context.Background(), store.CreateRunInput{ModelProvider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []runtime.ExecutionEvent{
+		{SchemaVersion: 1, ID: "event_1", RunID: meta.ID, Sequence: 1, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventTurnStarted},
+		{SchemaVersion: 1, ID: "event_2", RunID: meta.ID, Sequence: 2, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventModelCompleted},
+	} {
+		if err := runStore.AppendExecutionEvent(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := New(Config{Store: runStore, EventStore: runStore})
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs/"+meta.ID+"/execution-events?after_sequence=1", nil)
+	res := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", res.Code, res.Body.String())
+	}
+	var got executionEventsResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Available || got.NextSequence != 2 || len(got.Events) != 1 || got.Events[0].Sequence != 2 {
+		t.Fatalf("response = %#v", got)
+	}
+}
+
+func TestExecutionEventsSSEReplaysPersistedEvents(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	meta, err := runStore.CreateRun(context.Background(), store.CreateRunInput{ModelProvider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runStore.AppendExecutionEvent(context.Background(), runtime.ExecutionEvent{SchemaVersion: 1, ID: "event_3", RunID: meta.ID, Sequence: 3, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventToolCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Config{Store: runStore, EventStore: runStore})
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs/"+meta.ID+"/execution-events/stream?after_sequence=2", nil)
+	res := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), "id: 3") || !strings.Contains(res.Body.String(), "event: tool.completed") {
+		t.Fatalf("status=%d body=%q", res.Code, res.Body.String())
+	}
+}
+
+func TestExecutionEventWriteFailureDoesNotFailRun(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	observer := traceplugin.NewObserver(runStore, failingExecutionEventStore{})
+	t.Cleanup(observer.Close)
+	srv := New(Config{
+		Runner:        agent.NewRunner(agent.Config{Model: model.NewFakeProvider(), TraceObserver: observer}),
+		Store:         runStore,
+		TraceStore:    runStore,
+		EventStore:    runStore,
+		TraceObserver: observer,
+		ModelProvider: "fake",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs", bytes.NewBufferString(`{"message":"hello"}`))
+	req.Header.Set("content-type", "application/json")
+	res := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(res, req)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+	observer.Close()
+	if diagnostics := observer.Diagnostics(); diagnostics.Complete || diagnostics.LastError == "" {
+		t.Fatalf("diagnostics = %#v, want isolated event-store failure", diagnostics)
+	}
+}
+
+type failingExecutionEventStore struct{}
+
+func (failingExecutionEventStore) AppendExecutionEvent(context.Context, runtime.ExecutionEvent) error {
+	return errors.New("event store unavailable")
+}
+
+func (failingExecutionEventStore) ListExecutionEvents(context.Context, string, int64, int) ([]runtime.ExecutionEvent, error) {
+	return nil, errors.New("event store unavailable")
+}
+
+func (failingExecutionEventStore) LastExecutionEventSequence(context.Context, string) (int64, error) {
+	return 0, errors.New("event store unavailable")
 }
 
 func TestTraceRunSpanExcludesIdleTimeBeforeATurn(t *testing.T) {

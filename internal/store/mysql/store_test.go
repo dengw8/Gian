@@ -93,6 +93,39 @@ func TestRunStoreContractMySQL(t *testing.T) {
 	})
 }
 
+func TestExecutionEventStoreMySQL(t *testing.T) {
+	cfg, ok := mysqlIntegrationConfig(t)
+	if !ok {
+		return
+	}
+	runStore, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runStore.Close() })
+	resetIntegrationData(t, runStore)
+	meta, err := runStore.CreateRun(context.Background(), store.CreateRunInput{ModelProvider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []runtime.ExecutionEvent{
+		{SchemaVersion: 1, ID: "event_2", RunID: meta.ID, Sequence: 2, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventModelCompleted},
+		{SchemaVersion: 1, ID: "event_1", RunID: meta.ID, Sequence: 1, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventModelStarted},
+		{SchemaVersion: 1, ID: "event_1_retry", RunID: meta.ID, Sequence: 1, OccurredAt: time.Now().UTC(), Type: runtime.ExecutionEventModelStarted},
+	} {
+		if err := runStore.AppendExecutionEvent(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, err := runStore.ListExecutionEvents(context.Background(), meta.ID, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Sequence != 2 {
+		t.Fatalf("events = %#v", events)
+	}
+}
+
 func mysqlIntegrationConfig(t *testing.T) (Config, bool) {
 	t.Helper()
 	if os.Getenv("AGENT_TEST_MYSQL_ALLOW_CLEANUP") != "1" {
@@ -126,6 +159,8 @@ func mysqlIntegrationConfig(t *testing.T) (Config, bool) {
 func resetIntegrationData(t *testing.T, runStore *Store) {
 	t.Helper()
 	for _, table := range []string{
+		"agent_execution_events",
+		"agent_trace_spans",
 		"agent_run_states",
 		"agent_model_logs",
 		"agent_run_events",

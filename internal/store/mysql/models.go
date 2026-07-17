@@ -69,6 +69,16 @@ type traceSpanRecord struct {
 	Payload  string `gorm:"type:longtext;not null"`
 }
 
+type executionEventRecord struct {
+	RunID    string `gorm:"primaryKey;size:64"`
+	Sequence int64  `gorm:"primaryKey"`
+	Payload  string `gorm:"type:longtext;not null"`
+}
+
+func (executionEventRecord) TableName() string {
+	return "agent_execution_events"
+}
+
 func (traceSpanRecord) TableName() string {
 	return "agent_trace_spans"
 }

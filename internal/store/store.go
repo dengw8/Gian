@@ -71,3 +71,12 @@ type TraceStore interface {
 	UpsertTraceSpan(ctx context.Context, span runtime.TraceSpan) error
 	ListTraceSpans(ctx context.Context, runID string) ([]runtime.TraceSpan, error)
 }
+
+// ExecutionEventStore is optional for the same reason as TraceStore: it is
+// only consumed by the best-effort observability plugin, never by Run control
+// flow.
+type ExecutionEventStore interface {
+	AppendExecutionEvent(ctx context.Context, event runtime.ExecutionEvent) error
+	ListExecutionEvents(ctx context.Context, runID string, afterSequence int64, limit int) ([]runtime.ExecutionEvent, error)
+	LastExecutionEventSequence(ctx context.Context, runID string) (int64, error)
+}
