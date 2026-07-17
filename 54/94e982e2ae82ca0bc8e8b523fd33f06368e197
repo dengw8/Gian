@@ -1,0 +1,72 @@
+README.md
+  s_2b2e1a1a1c2306::t_7b7a6c992cd018 392,406-448,468-475
+cmd/agent-service/main.go
+  s_2b2e1a1a1c2306::t_7385b51f719f29 17,41,56,67-83,87-88,97-107
+config.example.yaml
+  s_2b2e1a1a1c2306::t_2a51bc710312a7 11-12
+docs/fornax-trace-usage-report.md
+  s_2b2e1a1a1c2306::t_ac54a52eba9931 1-124
+internal/agent/agent.go
+  s_2b2e1a1a1c2306::t_df78782a3ad570 5,16-23,27-34,38,60,77-80,82-89,113,138,147-152,158,165,172,180-185,188,204-207,210-221,255-272,292,295,302,318,330,335-337,344-345,351-356,362-412
+internal/agent/agent_test.go
+  s_2b2e1a1a1c2306::t_d403f22a763930 6,602-663
+internal/config/config.go
+  s_2b2e1a1a1c2306::t_191da1fc902c68 25,60-63,108
+internal/config/config_test.go
+  s_2b2e1a1a1c2306::t_3dfddbe8d76a18 34-36,54-68
+internal/runtime/trace.go
+  s_2b2e1a1a1c2306::t_7c9ce681787620 1-123
+internal/runtime/trace_test.go
+  s_2b2e1a1a1c2306::t_ad8a950289e11a 1-18
+internal/runtime/types.go
+  s_2b2e1a1a1c2306::t_457d1ab1174bc0 133
+internal/server/server.go
+  s_2b2e1a1a1c2306::t_2df1680c9415dd 16,32-33,41-42,65,78-106,134-135,148,157-159,171-185,377,383,391,415-417,443,451,461-463,521,554-557,565,613,619,638-641,648,670,688,708-710,716,722-728,827-1209
+internal/server/server_test.go
+  s_2b2e1a1a1c2306::t_b8ec78ea8c05c5 23,76-283
+internal/server/web/app.js
+  s_2b2e1a1a1c2306::t_e603bdcf5db016 9-17,30-31,35-38,62-70,76-84,90-91,97-98,105-109,111-117,249-251,317-787,800,820-823,1040-1045,1055,1147-1150,1159-1172,1174-1177,1185-1190,1192-1195,1199-1200,1204-1212
+internal/server/web/index.html
+  s_2b2e1a1a1c2306::t_c4f6b4d5f4c866 7,53-56,86,118-119,146,186-190,205-224
+internal/server/web/styles.css
+  s_2b2e1a1a1c2306::t_15f7365ca1cc3d 145-370,589-595,599,604,606-610,613-614,617-620,623-624,626,628,634,636,639-641,649,651-655,662-668,672-673,676,763,794-818,1316-1318,1321-1322,1325-1340,1342-1345,1348-1353,1356,1358-1362,1396,1400,1447-1451,1455-1457,1470-1471,1497-1510
+internal/store/local/store.go
+  s_2b2e1a1a1c2306::t_33429b364752ee 468-519,540-543
+internal/store/local/store_test.go
+  s_2b2e1a1a1c2306::t_6ba76f5f7430f7 61-83
+internal/store/mysql/models.go
+  s_2b2e1a1a1c2306::t_16d0a911835193 64-75
+internal/store/mysql/store.go
+  s_2b2e1a1a1c2306::t_3b4fa915320103 11,36,633-684
+internal/store/store.go
+  s_2b2e1a1a1c2306::t_bf79ebd31f0ae7 67-73
+internal/trace/observer.go
+  s_2b2e1a1a1c2306::t_a0745713b0abfa 1-167
+internal/trace/observer_test.go
+  s_2b2e1a1a1c2306::t_fab139e5f007e2 1-93
+migrations/mysql/003_add_trace_spans.sql
+  s_2b2e1a1a1c2306::t_a3db15010c6e0d 1-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5494e982e2ae82ca0bc8e8b523fd33f06368e197",
+  "prompts": {},
+  "humans": {
+    "h_863ffb53529059": {
+      "author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "sessions": {
+    "s_2b2e1a1a1c2306": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6518-3c5d-7250-8e95-5c4ea4e6ffca",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
