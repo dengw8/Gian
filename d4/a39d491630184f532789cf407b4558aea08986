@@ -1,0 +1,68 @@
+README.md
+  s_2b2e1a1a1c2306::t_49ba1926b12319 415-423,436,446,452-453,456-460,485
+cmd/agent-service/main.go
+  s_2b2e1a1a1c2306::t_5c73224f234a6d 68,71-75,77,79,91
+internal/agent/agent.go
+  s_2b2e1a1a1c2306::t_25ec34f462ce5a 139,196-198,210,234-236,240-245,249-250,322-324,335,345,362,388-393
+internal/agent/agent_test.go
+  s_2b2e1a1a1c2306::t_436a7ba67f64c2 635-651,654-657,663-685
+internal/runtime/execution_event.go
+  s_2b2e1a1a1c2306::t_dd31419487898d 1-84
+internal/runtime/trace.go
+  s_2b2e1a1a1c2306::t_a8de042466b21a 31-37
+internal/runtime/trace_test.go
+  s_2b2e1a1a1c2306::t_69337769681dcd 19-42
+internal/runtime/types.go
+  s_2b2e1a1a1c2306::t_cafaa46b751df9 134
+internal/server/server.go
+  s_2b2e1a1a1c2306::t_660012e1ed64e0 33,43,94-101,145,167-168,831-940,967,1001,1076-1081,1090-1102,1538-1552
+internal/server/server_test.go
+  s_2b2e1a1a1c2306::t_05ada23c2aa749 78,84,122-142,199-285
+internal/server/web/app.js
+  s_2b2e1a1a1c2306::t_dd11c26c3fc946 14-18,70,117,120,344-422,437-442,467-471,584,587-592,596-706,795,809,829,833-867,1292,1296-1298
+internal/server/web/index.html
+  s_2b2e1a1a1c2306::t_673f1059ffbb08 209
+internal/server/web/styles.css
+  s_2b2e1a1a1c2306::t_818af1b70c0e4c 351-363
+internal/store/local/store.go
+  s_2b2e1a1a1c2306::t_1a8f4379bcdf9c 442-509,604-607
+internal/store/local/store_test.go
+  s_2b2e1a1a1c2306::t_90f2d6679302fa 84-112
+internal/store/mysql/models.go
+  s_2b2e1a1a1c2306::t_f5f87dbc18e910 72-81
+internal/store/mysql/store.go
+  s_2b2e1a1a1c2306::t_191f4a01186e4e 37,597-649
+internal/store/mysql/store_test.go
+  s_2b2e1a1a1c2306::t_c379b76737e92c 96-128,162-163
+internal/store/store.go
+  s_2b2e1a1a1c2306::t_80cd30eee62858 74-82
+internal/trace/observer.go
+  s_2b2e1a1a1c2306::t_d272bf95076dcd 7,12,20-27,29-44,47,51-54,56-64,70-72,75-88,90,94-140,145-152,158-176,179,181-187,196,208-232,235-300,302,304-377,381-400
+internal/trace/observer_test.go
+  s_2b2e1a1a1c2306::t_ac69bcfba0883a 6,15-17,31-61,75-100,135-144
+migrations/mysql/004_add_execution_events.sql
+  s_2b2e1a1a1c2306::t_620300e94c552e 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d4a39d491630184f532789cf407b4558aea08986",
+  "prompts": {},
+  "humans": {
+    "h_863ffb53529059": {
+      "author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "sessions": {
+    "s_2b2e1a1a1c2306": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6518-3c5d-7250-8e95-5c4ea4e6ffca",
+        "model": "unknown"
+      },
+      "human_author": "dengwang.06 <dengwang.06@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
