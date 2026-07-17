@@ -64,3 +64,10 @@ type RunStore interface {
 	AppendModelLogs(ctx context.Context, runID string, logs []runtime.ModelLog) error
 	ListModelLogs(ctx context.Context, runID string) ([]runtime.ModelLog, error)
 }
+
+// TraceStore is separate from RunStore so Trace remains an optional observer
+// plugin instead of a dependency of the main Run execution path.
+type TraceStore interface {
+	UpsertTraceSpan(ctx context.Context, span runtime.TraceSpan) error
+	ListTraceSpans(ctx context.Context, runID string) ([]runtime.TraceSpan, error)
+}

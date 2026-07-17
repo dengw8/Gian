@@ -22,6 +22,7 @@ type Config struct {
 	Server  ServerConfig  `yaml:"server"`
 	Model   ModelConfig   `yaml:"model"`
 	Agent   AgentConfig   `yaml:"agent"`
+	Trace   TraceConfig   `yaml:"trace"`
 	Storage StorageConfig `yaml:"storage"`
 	Tools   ToolsConfig   `yaml:"tools"`
 }
@@ -54,6 +55,10 @@ type AgentConfig struct {
 	CompactionEnabled     bool `yaml:"compaction_enabled"`
 	CompactionMaxMessages int  `yaml:"compaction_max_messages"`
 	CompactionKeepRecent  int  `yaml:"compaction_keep_recent"`
+}
+
+type TraceConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type StorageConfig struct {
@@ -100,7 +105,7 @@ func LoadFile(path string) (Config, error) {
 }
 
 func Default() Config {
-	cfg := Config{}
+	cfg := Config{Trace: TraceConfig{Enabled: true}}
 	cfg.applyDefaults()
 	return cfg
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -597,4 +598,66 @@ func assertMessagesHaveTimes(t *testing.T, messages []runtime.Message) {
 			t.Fatalf("message %d has zero created_at: %#v", i, message)
 		}
 	}
+}
+
+func TestRunnerTraceCapturesToolDataFlowAndFailure(t *testing.T) {
+	registry, err := tools.NewRegistry(&failingTraceTool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector := &traceCollector{}
+	runner := NewRunner(Config{
+		Model: &sequenceProvider{responses: []runtime.Message{
+			{Role: runtime.RoleAssistant, ToolCalls: []runtime.ToolCall{{ID: "call_trace", Name: "failing_trace", Arguments: json.RawMessage(`{"value":"x"}`)}}},
+			{Role: runtime.RoleAssistant, Content: "handled"},
+		}},
+		MaxIterations: 4,
+		Tools:         registry,
+		TraceObserver: collector,
+	})
+	if _, err := runner.RunTurn(context.Background(), TurnInput{RunID: "run_trace", TurnID: "turn_trace", Message: "run tool"}); err != nil {
+		t.Fatal(err)
+	}
+	tool := collector.latest(runtime.TraceToolSpanID("call_trace"))
+	if tool.Status != runtime.TraceStatusFailed || tool.Error != "tool exploded" {
+		t.Fatalf("tool span = %#v, want failed with error", tool)
+	}
+	if tool.DurationMS < 0 || tool.CompletedAt.IsZero() || tool.StartedAt.IsZero() {
+		t.Fatalf("tool timing = %#v", tool)
+	}
+	if len(tool.Links) != 1 || tool.Links[0].Type != "requested_by_model" {
+		t.Fatalf("tool links = %#v", tool.Links)
+	}
+	secondModel := collector.latest(runtime.TraceModelSpanID("turn_trace_model_2"))
+	if len(secondModel.Links) != 1 || secondModel.Links[0].Type != "consumes_tool_result" || secondModel.Links[0].SpanID != tool.ID {
+		t.Fatalf("second model links = %#v", secondModel.Links)
+	}
+}
+
+type traceCollector struct{ spans []runtime.TraceSpan }
+
+func (c *traceCollector) Observe(_ context.Context, span runtime.TraceSpan) {
+	c.spans = append(c.spans, span)
+}
+
+func (c *traceCollector) latest(id string) runtime.TraceSpan {
+	var latest runtime.TraceSpan
+	for _, span := range c.spans {
+		if span.ID == id && span.Revision >= latest.Revision {
+			latest = span
+		}
+	}
+	return latest
+}
+
+type failingTraceTool struct{}
+
+func (*failingTraceTool) Name() string               { return "failing_trace" }
+func (*failingTraceTool) Description() string        { return "fails for trace tests" }
+func (*failingTraceTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (*failingTraceTool) ReadOnly() bool             { return true }
+func (*failingTraceTool) Destructive() bool          { return false }
+func (*failingTraceTool) Concurrent() bool           { return false }
+func (*failingTraceTool) Execute(context.Context, json.RawMessage) (runtime.ToolResult, error) {
+	return runtime.ToolResult{}, errors.New("tool exploded")
 }

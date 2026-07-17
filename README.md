@@ -389,6 +389,7 @@ data/runs/<run_id>/
   messages.jsonl
   events.jsonl
   model_logs.jsonl
+  trace.jsonl
 ```
 
 `messages.jsonl`, `events.jsonl`, and `model_logs.jsonl` are append-only JSON Lines files.
@@ -401,6 +402,49 @@ Token usage is persisted in two places:
 `cached_tokens` is populated from provider usage details when the provider reports prompt-cache hits.
 
 Model I/O logs are persisted in `model_logs.jsonl` for reproducible debugging. Each entry stores the final request passed to the Model Provider and the response or error returned by that provider.
+
+### Execution Trace
+
+Trace is an optional, default-enabled best-effort observer for newly created Runs:
+
+```yaml
+trace:
+  enabled: true
+```
+
+It records an asynchronous `Run → Turn → model/tool/approval` tree in
+`trace.jsonl` for local storage (or `agent_trace_spans` in MySQL). Trace writes
+never block or fail a Run; a slow or failed observer can leave an incomplete
+tree. Trace payloads redact common credential fields and omit attachment binary
+data. Existing Runs are not backfilled.
+
+The root Run span measures the active agent execution slice rather than time
+spent waiting for the next user message. Shell approval waiting time is shown
+by the approval span itself.
+
+Open `/app/runs/<run_id>/messages` for the conversation timeline or
+`/app/runs/<run_id>/trace` for the manually refreshed execution tree.
+
+Trace uses two complementary views:
+
+- **Tree** shows execution containment: `Run → Turn (graph) → model/tool/approval`.
+- **Chat** projects the same spans into user/model/tool-result order. Model tool calls and tool spans are linked by the stable tool-call ID; a tool result is also linked to the next model call that consumes it.
+
+The Trace page supports type/state/text filtering, a bounded “show more” flow
+for large Runs, span-level raw JSON copying, type-specific Run details,
+Metadata/Runtime, and a lightweight comparison of two Run summaries. Trace
+responses include a `diagnostics` object. If its `complete`
+field is false, the in-process observer dropped updates or encountered a write
+error, so the tree is useful for debugging but is not an audit record.
+
+Trace payloads are intentionally best-effort and are not backfilled. The API
+also exposes individual spans and comparisons:
+
+```text
+GET  /v1/runs/<run_id>/trace?kind=tool&status=failed&q=shell&limit=120
+GET  /v1/runs/<run_id>/trace/spans/<span_id>
+GET  /v1/runs/<run_id>/trace/compare/<other_run_id>
+```
 
 ### MySQL Store
 
@@ -421,10 +465,14 @@ storage:
 The password can be stored in the ignored `config.yaml`. A non-empty
 `AGENT_STORAGE_MYSQL_PASSWORD` overrides it.
 
-Before starting with the MySQL driver, apply
-[`migrations/mysql/001_create_agent_store.sql`](migrations/mysql/001_create_agent_store.sql)
-to the selected database. The service only pings MySQL and verifies that the
-five required tables exist; it never runs migrations or other DDL. Switching
+Before starting with the MySQL driver, apply the following migrations to the
+selected database:
+
+- [`migrations/mysql/001_create_agent_store.sql`](migrations/mysql/001_create_agent_store.sql)
+- [`migrations/mysql/003_add_trace_spans.sql`](migrations/mysql/003_add_trace_spans.sql)
+
+The service only pings MySQL and verifies that the
+required tables exist; it never runs migrations or other DDL. Switching
 between local and MySQL does not migrate or dual-write existing Run data.
 
 ## Current Scope

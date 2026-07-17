@@ -20,6 +20,7 @@ import (
 	"github.com/dengw8/Gian/internal/store"
 	"github.com/dengw8/Gian/internal/store/local"
 	"github.com/dengw8/Gian/internal/tools"
+	traceplugin "github.com/dengw8/Gian/internal/trace"
 )
 
 func TestCreateRunCompletesNoToolTurn(t *testing.T) {
@@ -69,6 +70,214 @@ func TestCreateRunCompletesNoToolTurn(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "runs", resp.Run.ID, "compaction.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("compaction file err = %v, want not exist when compaction is disabled", err)
+	}
+}
+
+func TestTraceEndpointReturnsObservedRunTree(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	observer := traceplugin.NewObserver(runStore)
+	t.Cleanup(observer.Close)
+	srv := New(Config{
+		Runner:        agent.NewRunner(agent.Config{Model: model.NewFakeProvider(), MaxIterations: 2, TraceObserver: observer}),
+		Store:         runStore,
+		TraceStore:    runStore,
+		TraceObserver: observer,
+		ModelProvider: "fake",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs", bytes.NewBufferString(`{"message":"hello"}`))
+	req.Header.Set("content-type", "application/json")
+	res := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(res, req)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", res.Code, res.Body.String())
+	}
+	var created createRunResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	appendReq := httptest.NewRequest(http.MethodPost, "/v1/runs/"+created.Run.ID+"/turns", bytes.NewBufferString(`{"message":"second"}`))
+	appendReq.Header.Set("content-type", "application/json")
+	appendRes := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(appendRes, appendReq)
+	if appendRes.Code != http.StatusOK {
+		t.Fatalf("append status = %d, body=%s", appendRes.Code, appendRes.Body.String())
+	}
+	observer.Close()
+
+	traceReq := httptest.NewRequest(http.MethodGet, "/v1/runs/"+created.Run.ID+"/trace", nil)
+	traceRes := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(traceRes, traceReq)
+	if traceRes.Code != http.StatusOK {
+		t.Fatalf("trace status = %d, body=%s", traceRes.Code, traceRes.Body.String())
+	}
+	var got traceResponse
+	if err := json.Unmarshal(traceRes.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Available || len(got.Spans) < 3 {
+		t.Fatalf("trace = %#v, want available run/turn/model spans", got)
+	}
+	var firstTurn, laterTurn runtime.TraceSpan
+	for _, span := range got.Spans {
+		if span.Kind == runtime.TraceSpanTurn {
+			var input map[string]json.RawMessage
+			if err := json.Unmarshal(span.Input, &input); err != nil {
+				t.Fatalf("decode turn input: %v", err)
+			}
+			if _, ok := input["system_prompt"]; ok {
+				firstTurn = span
+			} else {
+				laterTurn = span
+			}
+		}
+	}
+	if firstTurn.ID == "" || laterTurn.ID == "" {
+		t.Fatalf("turn spans = %#v, want first and later turns", got.Spans)
+	}
+	var input map[string]json.RawMessage
+	if err := json.Unmarshal(firstTurn.Input, &input); err != nil {
+		t.Fatalf("decode turn input: %v", err)
+	}
+	if string(input["system_prompt"]) == "\"\"" || len(input["system_prompt"]) == 0 {
+		t.Fatalf("first turn lacks system prompt: %s", firstTurn.Input)
+	}
+	var userPrompt runtime.Message
+	if err := json.Unmarshal(input["user_prompt"], &userPrompt); err != nil {
+		t.Fatalf("decode user prompt: %v", err)
+	}
+	if userPrompt.Role != runtime.RoleUser || userPrompt.Content != "hello" {
+		t.Fatalf("user prompt = %#v, want hello", userPrompt)
+	}
+	if !userPrompt.CreatedAt.Equal(created.Messages[0].CreatedAt) {
+		t.Fatalf("user prompt timestamp = %s, want observed message timestamp %s", userPrompt.CreatedAt, created.Messages[0].CreatedAt)
+	}
+	var output []runtime.Message
+	if err := json.Unmarshal(firstTurn.Output, &output); err != nil {
+		t.Fatalf("decode turn output: %v", err)
+	}
+	if len(output) == 0 || output[0].Role != runtime.RoleAssistant {
+		t.Fatalf("turn output = %#v, want assistant output", output)
+	}
+	input = nil
+	if err := json.Unmarshal(laterTurn.Input, &input); err != nil {
+		t.Fatalf("decode later turn input: %v", err)
+	}
+	if _, ok := input["system_prompt"]; ok {
+		t.Fatalf("later turn should not include system prompt: %s", laterTurn.Input)
+	}
+	if err := json.Unmarshal(input["user_prompt"], &userPrompt); err != nil {
+		t.Fatalf("decode later user prompt: %v", err)
+	}
+	if userPrompt.Content != "second" {
+		t.Fatalf("later user prompt = %#v, want second", userPrompt)
+	}
+}
+
+func TestTraceRunSpanExcludesIdleTimeBeforeATurn(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	observer := traceplugin.NewObserver(runStore)
+	t.Cleanup(observer.Close)
+	srv := New(Config{
+		Runner:        agent.NewRunner(agent.Config{Model: model.NewFakeProvider(), TraceObserver: observer}),
+		Store:         runStore,
+		TraceStore:    runStore,
+		TraceObserver: observer,
+		ModelProvider: "fake",
+	})
+
+	created := createRunForTest(t, srv, `{}`)
+	const idle = 80 * time.Millisecond
+	time.Sleep(idle)
+	appendReq := httptest.NewRequest(http.MethodPost, "/v1/runs/"+created.Run.ID+"/turns", bytes.NewBufferString(`{"message":"hello"}`))
+	appendReq.Header.Set("content-type", "application/json")
+	appendRes := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(appendRes, appendReq)
+	if appendRes.Code != http.StatusOK {
+		t.Fatalf("append status = %d, body=%s", appendRes.Code, appendRes.Body.String())
+	}
+	observer.Close()
+
+	spans, err := runStore.ListTraceSpans(context.Background(), created.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, span := range spans {
+		if span.Kind != runtime.TraceSpanRun {
+			continue
+		}
+		if !span.StartedAt.After(created.Run.CreatedAt) {
+			t.Fatalf("run span started_at = %s, must start when execution begins after run creation %s", span.StartedAt, created.Run.CreatedAt)
+		}
+		if span.DurationMS >= idle.Milliseconds()/2 {
+			t.Fatalf("run duration = %dms, should exclude %dms of idle time", span.DurationMS, idle.Milliseconds())
+		}
+		return
+	}
+	t.Fatal("expected a run span")
+}
+
+func TestGetPendingApprovalReturnsEmptySuccessWhenIdle(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	srv := New(Config{Store: runStore, ModelProvider: "fake"})
+	created := createRunForTest(t, srv, `{}`)
+	req := httptest.NewRequest(http.MethodGet, "/v1/runs/"+created.Run.ID+"/approvals/pending", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got pendingApprovalResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Approval != nil {
+		t.Fatalf("approval = %#v, want nil", got.Approval)
+	}
+}
+
+func TestTraceAPIExposesDiagnosticsFilteringAndComparison(t *testing.T) {
+	runStore := local.New(t.TempDir())
+	first, err := runStore.CreateRun(context.Background(), store.CreateRunInput{ModelProvider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := runStore.CreateRun(context.Background(), store.CreateRunInput{ModelProvider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().UTC().Add(-time.Second)
+	spans := []runtime.TraceSpan{
+		{ID: "trace_run_" + first.ID, RunID: first.ID, Kind: runtime.TraceSpanRun, Name: "Run", Status: runtime.TraceStatusSucceeded, Revision: 1, Sequence: 1, StartedAt: started, CompletedAt: time.Now().UTC()},
+		{ID: "tool_call", ParentID: "trace_run_" + first.ID, RunID: first.ID, Kind: runtime.TraceSpanTool, Name: "read_file", Status: runtime.TraceStatusFailed, Revision: 1, Sequence: 2, StartedAt: started, CompletedAt: time.Now().UTC(), Error: "missing"},
+	}
+	for _, span := range spans {
+		if err := runStore.UpsertTraceSpan(context.Background(), span); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runStore.UpsertTraceSpan(context.Background(), runtime.TraceSpan{ID: "trace_run_" + second.ID, RunID: second.ID, Kind: runtime.TraceSpanRun, Name: "Run", Status: runtime.TraceStatusSucceeded, Revision: 1, Sequence: 1, StartedAt: started, CompletedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Config{Store: runStore, TraceStore: runStore})
+	traceReq := httptest.NewRequest(http.MethodGet, "/v1/runs/"+first.ID+"/trace?kind=tool&limit=1", nil)
+	traceRes := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(traceRes, traceReq)
+	if traceRes.Code != http.StatusOK {
+		t.Fatalf("trace status = %d body=%s", traceRes.Code, traceRes.Body.String())
+	}
+	var trace traceResponse
+	if err := json.Unmarshal(traceRes.Body.Bytes(), &trace); err != nil {
+		t.Fatal(err)
+	}
+	if trace.TotalSpans != 2 || len(trace.Spans) != 1 || trace.Spans[0].Kind != runtime.TraceSpanTool || !trace.FilterActive {
+		t.Fatalf("trace = %#v", trace)
+	}
+	compareReq := httptest.NewRequest(http.MethodGet, "/v1/runs/"+first.ID+"/trace/compare/"+second.ID, nil)
+	compareRes := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(compareRes, compareReq)
+	if compareRes.Code != http.StatusOK {
+		t.Fatalf("compare status = %d body=%s", compareRes.Code, compareRes.Body.String())
 	}
 }
 

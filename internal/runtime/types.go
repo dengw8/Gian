@@ -130,6 +130,7 @@ type PendingShellApproval struct {
 	RiskReasons        []string            `json:"risk_reasons"`
 	ScriptHash         string              `json:"script_hash"`
 	RemainingToolCalls []ToolCall          `json:"remaining_tool_calls,omitempty"`
+	TurnID             string              `json:"turn_id,omitempty"`
 	RequestedAt        time.Time           `json:"requested_at"`
 	Status             ShellApprovalStatus `json:"status"`
 }

@@ -61,6 +61,18 @@ type stateRecord struct {
 	PendingApprovalPayload *string `gorm:"type:longtext"`
 }
 
+type traceSpanRecord struct {
+	RunID    string `gorm:"primaryKey;size:64"`
+	SpanID   string `gorm:"primaryKey;size:128"`
+	Revision int    `gorm:"not null"`
+	Sequence int    `gorm:"not null"`
+	Payload  string `gorm:"type:longtext;not null"`
+}
+
+func (traceSpanRecord) TableName() string {
+	return "agent_trace_spans"
+}
+
 func (stateRecord) TableName() string {
 	return "agent_run_states"
 }

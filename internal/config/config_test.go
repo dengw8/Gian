@@ -31,6 +31,9 @@ func TestLoadFileAppliesDefaults(t *testing.T) {
 	if cfg.Agent.CompactionEnabled {
 		t.Fatal("compaction enabled by default")
 	}
+	if !cfg.Trace.Enabled {
+		t.Fatal("trace enabled = false, want true by default")
+	}
 	if cfg.Agent.CompactionMaxMessages != defaultCompactionMaxMessages {
 		t.Fatalf("compaction max messages = %d, want %d", cfg.Agent.CompactionMaxMessages, defaultCompactionMaxMessages)
 	}
@@ -45,6 +48,21 @@ func TestLoadFileAppliesDefaults(t *testing.T) {
 	}
 	if cfg.Tools.Workspace != "." {
 		t.Fatalf("workspace = %q, want .", cfg.Tools.Workspace)
+	}
+}
+
+func TestLoadFileAllowsTraceToBeDisabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("trace:\n  enabled: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Trace.Enabled {
+		t.Fatal("trace enabled = true, want false")
 	}
 }
 

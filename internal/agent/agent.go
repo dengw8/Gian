@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -12,22 +13,29 @@ import (
 )
 
 type Config struct {
-	Model         model.Provider
-	MaxIterations int
-	Middleware    []Middleware
-	Tools         *tools.Registry
-	PromptBuilder SystemPromptBuilder
+	Model              model.Provider
+	MaxIterations      int
+	Middleware         []Middleware
+	Tools              *tools.Registry
+	PromptBuilder      SystemPromptBuilder
+	TraceObserver      runtime.ExecutionObserver
+	TraceModelProvider string
+	TraceModelName     string
 }
 
 type Runner struct {
-	model         model.Provider
-	maxIterations int
-	middleware    []Middleware
-	tools         *tools.Registry
-	promptBuilder SystemPromptBuilder
+	model              model.Provider
+	maxIterations      int
+	middleware         []Middleware
+	tools              *tools.Registry
+	promptBuilder      SystemPromptBuilder
+	traceObserver      runtime.ExecutionObserver
+	traceModelProvider string
+	traceModelName     string
 }
 
 type TurnInput struct {
+	RunID             string
 	Message           string
 	Attachments       []runtime.Attachment
 	History           []runtime.Message
@@ -49,6 +57,7 @@ type TurnOutput struct {
 }
 
 type ResumeInput struct {
+	RunID      string
 	History    []runtime.Message
 	Plan       runtime.PlanState
 	Compaction runtime.CompactionState
@@ -65,12 +74,19 @@ func NewRunner(cfg Config) *Runner {
 	if maxIterations <= 0 {
 		maxIterations = 4
 	}
+	observer := cfg.TraceObserver
+	if observer == nil {
+		observer = runtime.NoopExecutionObserver{}
+	}
 	return &Runner{
-		model:         cfg.Model,
-		maxIterations: maxIterations,
-		middleware:    append([]Middleware(nil), cfg.Middleware...),
-		tools:         cfg.Tools,
-		promptBuilder: cfg.PromptBuilder,
+		model:              cfg.Model,
+		maxIterations:      maxIterations,
+		middleware:         append([]Middleware(nil), cfg.Middleware...),
+		tools:              cfg.Tools,
+		promptBuilder:      cfg.PromptBuilder,
+		traceObserver:      observer,
+		traceModelProvider: cfg.TraceModelProvider,
+		traceModelName:     cfg.TraceModelName,
 	}
 }
 
@@ -94,7 +110,7 @@ func (r *Runner) RunTurn(ctx context.Context, input TurnInput) (TurnOutput, erro
 		Compaction: input.Compaction,
 	}
 	newMessageStart := len(history)
-	recorder := newTurnRecorder(input.Events, input.TurnID, input.StreamModelOutput)
+	recorder := newTurnRecorder(input.Events, r.traceObserver, input.RunID, input.TurnID, input.StreamModelOutput)
 
 	if err := r.beforeAgent(ctx, state); err != nil {
 		return TurnOutput{}, err
@@ -119,7 +135,7 @@ func (r *Runner) ResumeTurn(ctx context.Context, input ResumeInput) (TurnOutput,
 		Compaction: input.Compaction,
 	}
 	newMessageStart := len(state.Messages)
-	recorder := newTurnRecorder(input.Events, input.TurnID, false)
+	recorder := newTurnRecorder(input.Events, r.traceObserver, input.RunID, input.TurnID, false)
 	if err := r.beforeAgent(ctx, state); err != nil {
 		return TurnOutput{}, err
 	}
@@ -128,23 +144,32 @@ func (r *Runner) ResumeTurn(ctx context.Context, input ResumeInput) (TurnOutput,
 	}()
 
 	result := runtime.ToolResult{ToolCallID: input.Approval.ToolCall.ID, Name: input.Approval.ToolCall.Name}
+	approvalStarted := input.Approval.RequestedAt
+	if approvalStarted.IsZero() {
+		approvalStarted = time.Now().UTC()
+	}
+	approvalID := runtime.TraceApprovalSpanID(input.Approval.ToolCall.ID)
+	toolID := runtime.TraceToolSpanID(input.Approval.ToolCall.ID)
 	switch input.Decision {
 	case runtime.ShellApprovalApprove:
 		if err := recorder.emit(toolEvent("approval_approved", "Shell approval approved", input.Approval.ToolCall.ID)); err != nil {
 			return TurnOutput{}, err
 		}
+		r.observeTrace(ctx, recorder, runtime.TraceSpan{ID: approvalID, ParentID: toolID, RunID: input.RunID, TurnID: input.TurnID, Kind: runtime.TraceSpanApproval, Component: "approval", Name: "Shell approval", Status: runtime.TraceStatusSucceeded, Revision: 2, Sequence: recorder.sequenceFor(approvalID), StartedAt: approvalStarted, CompletedAt: time.Now().UTC(), Input: traceJSON(input.Approval), Output: traceJSON(map[string]any{"decision": input.Decision})})
 		result = r.executeApprovedTool(ctx, input.Approval.ToolCall, state)
 	case runtime.ShellApprovalDeny:
 		if err := recorder.emit(toolEvent("approval_denied", "Shell approval denied", input.Approval.ToolCall.ID)); err != nil {
 			return TurnOutput{}, err
 		}
 		result.Error = "shell execution denied by user"
+		r.observeTrace(ctx, recorder, runtime.TraceSpan{ID: approvalID, ParentID: toolID, RunID: input.RunID, TurnID: input.TurnID, Kind: runtime.TraceSpanApproval, Component: "approval", Name: "Shell approval", Status: runtime.TraceStatusDenied, Revision: 2, Sequence: recorder.sequenceFor(approvalID), StartedAt: approvalStarted, CompletedAt: time.Now().UTC(), Input: traceJSON(input.Approval), Output: traceJSON(map[string]any{"decision": input.Decision}), Error: result.Error})
 		_ = r.afterTool(ctx, result, state)
 	case runtime.ShellApprovalCancel:
 		if err := recorder.emit(toolEvent("approval_cancelled", "Shell approval cancelled", input.Approval.ToolCall.ID)); err != nil {
 			return TurnOutput{}, err
 		}
 		result.Error = "shell execution cancelled by user"
+		r.observeTrace(ctx, recorder, runtime.TraceSpan{ID: approvalID, ParentID: toolID, RunID: input.RunID, TurnID: input.TurnID, Kind: runtime.TraceSpanApproval, Component: "approval", Name: "Shell approval", Status: runtime.TraceStatusCancelled, Revision: 2, Sequence: recorder.sequenceFor(approvalID), StartedAt: approvalStarted, CompletedAt: time.Now().UTC(), Input: traceJSON(input.Approval), Output: traceJSON(map[string]any{"decision": input.Decision}), Error: result.Error})
 		_ = r.afterTool(ctx, result, state)
 	default:
 		return TurnOutput{}, fmt.Errorf("unsupported shell approval decision %q", input.Decision)
@@ -152,9 +177,15 @@ func (r *Runner) ResumeTurn(ctx context.Context, input ResumeInput) (TurnOutput,
 	if err := recorder.emit(toolEvent("tool_completed", result.Name, result.ToolCallID)); err != nil {
 		return TurnOutput{}, err
 	}
+	completedAt := time.Now().UTC()
+	toolStatus := runtime.TraceStatusSucceeded
+	if result.Error != "" {
+		toolStatus = runtime.TraceStatusFailed
+	}
+	r.observeTrace(ctx, recorder, runtime.TraceSpan{ID: toolID, ParentID: runtime.TraceTurnSpanID(input.TurnID), RunID: input.RunID, TurnID: input.TurnID, Kind: runtime.TraceSpanTool, Component: "tool", Name: result.Name, Status: toolStatus, Revision: 3, Sequence: recorder.sequenceFor(toolID), StartedAt: approvalStarted, CompletedAt: completedAt, DurationMS: completedAt.Sub(approvalStarted).Milliseconds(), ToolCallID: result.ToolCallID, Input: input.Approval.ToolCall.Arguments, Output: traceJSON(result), Error: result.Error})
 	appendToolMessage(state, result)
 
-	pending, err := r.runToolCalls(ctx, input.Approval.RemainingToolCalls, state, recorder)
+	pending, err := r.runToolCalls(ctx, input.Approval.RemainingToolCalls, state, recorder, "")
 	if err != nil {
 		return r.turnOutput(state, newMessageStart, recorder, nil), err
 	}
@@ -170,10 +201,24 @@ type turnRecorder struct {
 	sink              EventSink
 	turnID            string
 	streamModelOutput bool
+	traceObserver     runtime.ExecutionObserver
+	runID             string
+	traceSequence     int
+	spanSequences     map[string]int
 }
 
-func newTurnRecorder(sink EventSink, turnID string, streamModelOutput bool) *turnRecorder {
-	return &turnRecorder{sink: sink, turnID: turnID, streamModelOutput: streamModelOutput}
+func newTurnRecorder(sink EventSink, observer runtime.ExecutionObserver, runID, turnID string, streamModelOutput bool) *turnRecorder {
+	return &turnRecorder{sink: sink, turnID: turnID, streamModelOutput: streamModelOutput, traceObserver: observer, runID: runID, traceSequence: 10, spanSequences: map[string]int{}}
+}
+
+func (r *turnRecorder) sequenceFor(spanID string) int {
+	if sequence, ok := r.spanSequences[spanID]; ok {
+		return sequence
+	}
+	sequence := r.traceSequence
+	r.traceSequence += 10
+	r.spanSequences[spanID] = sequence
+	return sequence
 }
 
 func (r *turnRecorder) emit(event runtime.Event) error {
@@ -207,6 +252,24 @@ func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart
 			return TurnOutput{}, err
 		}
 		modelLog := newModelLog(len(recorder.modelLogs)+1, modelCallID, req)
+		modelSpanID := runtime.TraceModelSpanID(modelCallID)
+		r.observeTrace(ctx, recorder, runtime.TraceSpan{
+			ID:          modelSpanID,
+			ParentID:    runtime.TraceTurnSpanID(recorder.turnID),
+			RunID:       recorder.runID,
+			TurnID:      recorder.turnID,
+			Kind:        runtime.TraceSpanModel,
+			Component:   "model",
+			Name:        r.modelTraceName(),
+			Status:      runtime.TraceStatusRunning,
+			Revision:    1,
+			Sequence:    recorder.sequenceFor(modelSpanID),
+			StartedAt:   modelLog.StartedAt,
+			ModelCallID: modelCallID,
+			Links:       modelInputLinks(req.Messages),
+			Input:       traceJSON(modelLog.Request),
+			Attributes:  r.modelTraceAttributes(),
+		})
 		var resp model.Response
 		var err error
 		if recorder.streamModelOutput {
@@ -226,14 +289,17 @@ func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart
 			modelLog.CompletedAt = time.Now().UTC()
 			modelLog.Error = err.Error()
 			recorder.modelLogs = append(recorder.modelLogs, modelLog)
+			r.observeTrace(ctx, recorder, runtime.TraceSpan{ID: modelSpanID, ParentID: runtime.TraceTurnSpanID(recorder.turnID), RunID: recorder.runID, TurnID: recorder.turnID, Kind: runtime.TraceSpanModel, Component: "model", Name: r.modelTraceName(), Status: runtime.TraceStatusFailed, Revision: 2, Sequence: recorder.sequenceFor(modelSpanID), StartedAt: modelLog.StartedAt, CompletedAt: modelLog.CompletedAt, DurationMS: modelLog.CompletedAt.Sub(modelLog.StartedAt).Milliseconds(), ModelCallID: modelCallID, Links: modelInputLinks(req.Messages), Input: traceJSON(modelLog.Request), Error: err.Error(), Attributes: r.modelTraceAttributes()})
 			return r.turnOutput(state, newMessageStart, recorder, nil), err
 		}
+		resp.Message = timestampMessage(resp.Message)
 		modelLog.CompletedAt = time.Now().UTC()
 		modelLog.Response = runtime.ModelResponseLog{
 			Message: resp.Message,
 			Usage:   resp.Usage,
 		}
 		recorder.modelLogs = append(recorder.modelLogs, modelLog)
+		r.observeTrace(ctx, recorder, runtime.TraceSpan{ID: modelSpanID, ParentID: runtime.TraceTurnSpanID(recorder.turnID), RunID: recorder.runID, TurnID: recorder.turnID, Kind: runtime.TraceSpanModel, Component: "model", Name: r.modelTraceName(), Status: runtime.TraceStatusSucceeded, Revision: 2, Sequence: recorder.sequenceFor(modelSpanID), StartedAt: modelLog.StartedAt, CompletedAt: modelLog.CompletedAt, DurationMS: modelLog.CompletedAt.Sub(modelLog.StartedAt).Milliseconds(), ModelCallID: modelCallID, Links: append(modelInputLinks(req.Messages), modelOutputLinks(resp.Message.ToolCalls)...), Input: traceJSON(modelLog.Request), Output: traceJSON(modelLog.Response), Usage: resp.Usage, Attributes: r.modelTraceAttributes()})
 		if err := recorder.emit(modelCompletedEvent(modelCallID, resp.Usage)); err != nil {
 			return TurnOutput{}, err
 		}
@@ -249,7 +315,7 @@ func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart
 		if len(resp.Message.ToolCalls) == 0 {
 			return r.turnOutput(state, newMessageStart, recorder, nil), nil
 		}
-		pending, err := r.runToolCalls(ctx, resp.Message.ToolCalls, state, recorder)
+		pending, err := r.runToolCalls(ctx, resp.Message.ToolCalls, state, recorder, modelCallID)
 		if err != nil {
 			return r.turnOutput(state, newMessageStart, recorder, nil), err
 		}
@@ -261,25 +327,87 @@ func (r *Runner) runModelLoop(ctx context.Context, state *State, newMessageStart
 	return r.turnOutput(state, newMessageStart, recorder, nil), errors.New("agent turn exceeded max iterations")
 }
 
-func (r *Runner) runToolCalls(ctx context.Context, calls []runtime.ToolCall, state *State, recorder *turnRecorder) (*runtime.PendingShellApproval, error) {
+func (r *Runner) runToolCalls(ctx context.Context, calls []runtime.ToolCall, state *State, recorder *turnRecorder, modelCallID string) (*runtime.PendingShellApproval, error) {
 	for i, call := range calls {
 		if err := recorder.emit(toolEvent("tool_started", call.Name, call.ID)); err != nil {
 			return nil, err
 		}
+		spanID := runtime.TraceToolSpanID(call.ID)
+		startedAt := time.Now().UTC()
+		r.observeTrace(ctx, recorder, runtime.TraceSpan{ID: spanID, ParentID: runtime.TraceTurnSpanID(recorder.turnID), RunID: recorder.runID, TurnID: recorder.turnID, Kind: runtime.TraceSpanTool, Component: "tool", Name: call.Name, Status: runtime.TraceStatusRunning, Revision: 1, Sequence: recorder.sequenceFor(spanID), StartedAt: startedAt, ToolCallID: call.ID, Links: []runtime.TraceLink{{Type: "requested_by_model", SpanID: runtime.TraceModelSpanID(modelCallID), ToolCallID: call.ID}}, Input: append(json.RawMessage(nil), call.Arguments...)})
 		result, pending := r.executeTool(ctx, call, state)
 		if pending != nil {
 			pending.RemainingToolCalls = append([]runtime.ToolCall(nil), calls[i+1:]...)
 			if err := recorder.emit(toolEvent("approval_required", "Shell approval required", call.ID)); err != nil {
 				return nil, err
 			}
+			r.observeTrace(ctx, recorder, runtime.TraceSpan{ID: spanID, ParentID: runtime.TraceTurnSpanID(recorder.turnID), RunID: recorder.runID, TurnID: recorder.turnID, Kind: runtime.TraceSpanTool, Component: "tool", Name: call.Name, Status: runtime.TraceStatusAwaitingApproval, Revision: 2, Sequence: recorder.sequenceFor(spanID), StartedAt: startedAt, ToolCallID: call.ID, Links: []runtime.TraceLink{{Type: "requested_by_model", SpanID: runtime.TraceModelSpanID(modelCallID), ToolCallID: call.ID}}, Input: append(json.RawMessage(nil), call.Arguments...)})
+			r.observeTrace(ctx, recorder, runtime.TraceSpan{ID: runtime.TraceApprovalSpanID(call.ID), ParentID: spanID, RunID: recorder.runID, TurnID: recorder.turnID, Kind: runtime.TraceSpanApproval, Component: "approval", Name: "Shell approval", Status: runtime.TraceStatusAwaitingApproval, Revision: 1, Sequence: recorder.sequenceFor(runtime.TraceApprovalSpanID(call.ID)), StartedAt: time.Now().UTC(), ToolCallID: call.ID, Input: traceJSON(*pending)})
 			return pending, nil
 		}
 		if err := recorder.emit(toolEvent("tool_completed", result.Name, result.ToolCallID)); err != nil {
 			return nil, err
 		}
+		completedAt := time.Now().UTC()
+		status := runtime.TraceStatusSucceeded
+		if result.Error != "" {
+			status = runtime.TraceStatusFailed
+		}
+		r.observeTrace(ctx, recorder, runtime.TraceSpan{ID: spanID, ParentID: runtime.TraceTurnSpanID(recorder.turnID), RunID: recorder.runID, TurnID: recorder.turnID, Kind: runtime.TraceSpanTool, Component: "tool", Name: result.Name, Status: status, Revision: 2, Sequence: recorder.sequenceFor(spanID), StartedAt: startedAt, CompletedAt: completedAt, DurationMS: completedAt.Sub(startedAt).Milliseconds(), ToolCallID: result.ToolCallID, Links: []runtime.TraceLink{{Type: "requested_by_model", SpanID: runtime.TraceModelSpanID(modelCallID), ToolCallID: call.ID}}, Input: append(json.RawMessage(nil), call.Arguments...), Output: traceJSON(result), Error: result.Error})
 		appendToolMessage(state, result)
 	}
 	return nil, nil
+}
+
+func (r *Runner) observeTrace(ctx context.Context, recorder *turnRecorder, span runtime.TraceSpan) {
+	if recorder.traceObserver == nil || span.RunID == "" {
+		return
+	}
+	recorder.traceObserver.Observe(ctx, span)
+}
+
+func traceJSON(value any) json.RawMessage {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return payload
+}
+
+func modelOutputLinks(calls []runtime.ToolCall) []runtime.TraceLink {
+	links := make([]runtime.TraceLink, 0, len(calls))
+	for _, call := range calls {
+		links = append(links, runtime.TraceLink{Type: "requests_tool", SpanID: runtime.TraceToolSpanID(call.ID), ToolCallID: call.ID})
+	}
+	return links
+}
+
+func modelInputLinks(messages []runtime.Message) []runtime.TraceLink {
+	links := make([]runtime.TraceLink, 0)
+	for _, message := range messages {
+		if message.Role == runtime.RoleTool && message.ToolCallID != "" {
+			links = append(links, runtime.TraceLink{Type: "consumes_tool_result", SpanID: runtime.TraceToolSpanID(message.ToolCallID), ToolCallID: message.ToolCallID})
+		}
+	}
+	return links
+}
+
+func (r *Runner) modelTraceName() string {
+	if r.traceModelName != "" {
+		return r.traceModelName
+	}
+	return "Model"
+}
+
+func (r *Runner) modelTraceAttributes() map[string]any {
+	attributes := map[string]any{}
+	if r.traceModelProvider != "" {
+		attributes["model_provider"] = r.traceModelProvider
+	}
+	if r.traceModelName != "" {
+		attributes["model_name"] = r.traceModelName
+	}
+	return attributes
 }
 
 func appendToolMessage(state *State, result runtime.ToolResult) {

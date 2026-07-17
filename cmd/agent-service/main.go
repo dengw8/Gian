@@ -14,6 +14,7 @@ import (
 	"github.com/dengw8/Gian/internal/store/local"
 	mysqlstore "github.com/dengw8/Gian/internal/store/mysql"
 	"github.com/dengw8/Gian/internal/tools"
+	traceplugin "github.com/dengw8/Gian/internal/trace"
 )
 
 func main() {
@@ -37,7 +38,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("build tool registry: %v", err)
 	}
-	runner := agent.NewRunner(agent.Config{
+	runnerConfig := agent.Config{
 		Model:         provider,
 		MaxIterations: cfg.Agent.MaxIterations,
 		Tools:         registry,
@@ -52,7 +53,7 @@ func main() {
 			},
 			agent.SubAgentMiddleware{},
 		},
-	})
+	}
 
 	runStore, closeStore, err := buildRunStore(context.Background(), cfg)
 	if err != nil {
@@ -63,14 +64,44 @@ func main() {
 			log.Printf("close run store: %v", err)
 		}
 	}()
+	var traceStore store.TraceStore
+	var traceObserver *traceplugin.Observer
+	if cfg.Trace.Enabled {
+		var ok bool
+		traceStore, ok = runStore.(store.TraceStore)
+		if !ok {
+			log.Printf("trace is disabled: configured run store does not implement TraceStore")
+			traceStore = nil
+		} else {
+			traceObserver = traceplugin.NewObserver(traceStore)
+			defer traceObserver.Close()
+		}
+	}
+	runnerConfig.TraceObserver = traceObserver
+	runnerConfig.TraceModelProvider = cfg.Model.Provider
+	runnerConfig.TraceModelName = configuredModelName(cfg)
+	runner := agent.NewRunner(runnerConfig)
 	handler := server.New(server.Config{
 		Runner:        runner,
 		Store:         runStore,
+		TraceStore:    traceStore,
+		TraceObserver: traceObserver,
 		ModelProvider: cfg.Model.Provider,
 	})
 	log.Printf("agent service listening on %s", cfg.Server.Addr)
 	if err := http.ListenAndServe(cfg.Server.Addr, handler.Routes()); err != nil {
 		log.Printf("serve: %v", err)
+	}
+}
+
+func configuredModelName(cfg config.Config) string {
+	switch cfg.Model.Provider {
+	case "openai_compatible":
+		return cfg.Model.OpenAI.Model
+	case "modelhub":
+		return cfg.Model.ModelHub.Model
+	default:
+		return cfg.Model.Provider
 	}
 }
 

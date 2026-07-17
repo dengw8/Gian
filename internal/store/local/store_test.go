@@ -58,6 +58,29 @@ func TestStoreUsesInspectableRunLayout(t *testing.T) {
 	}
 }
 
+func TestTraceSpansKeepLatestRevision(t *testing.T) {
+	ctx := context.Background()
+	localStore := New(t.TempDir())
+	meta, err := localStore.CreateRun(ctx, store.CreateRunInput{ModelProvider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().UTC()
+	if err := localStore.UpsertTraceSpan(ctx, runtime.TraceSpan{ID: "span_1", RunID: meta.ID, Kind: runtime.TraceSpanModel, Name: "Model", Status: runtime.TraceStatusSucceeded, Revision: 2, Sequence: 2, StartedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	if err := localStore.UpsertTraceSpan(ctx, runtime.TraceSpan{ID: "span_1", RunID: meta.ID, Kind: runtime.TraceSpanModel, Name: "Model", Status: runtime.TraceStatusRunning, Revision: 1, Sequence: 2, StartedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	spans, err := localStore.ListTraceSpans(ctx, meta.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spans) != 1 || spans[0].Status != runtime.TraceStatusSucceeded {
+		t.Fatalf("spans = %#v, want latest succeeded span", spans)
+	}
+}
+
 func TestStoreReadsLargeMessageLines(t *testing.T) {
 	ctx := context.Background()
 	localStore := New(t.TempDir())

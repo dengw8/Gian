@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,7 @@ var requiredTables = []string{
 	"agent_run_events",
 	"agent_model_logs",
 	"agent_run_states",
+	"agent_trace_spans",
 }
 
 type Config struct {
@@ -626,6 +628,58 @@ func (s *Store) ListModelLogs(ctx context.Context, runID string) ([]runtime.Mode
 		logs = append(logs, modelLog)
 	}
 	return logs, nil
+}
+
+func (s *Store) UpsertTraceSpan(ctx context.Context, span runtime.TraceSpan) error {
+	if err := s.requireRun(ctx, span.RunID); err != nil {
+		return err
+	}
+	if span.ID == "" {
+		return errors.New("trace span id is required")
+	}
+	payload, err := marshalValue(span)
+	if err != nil {
+		return err
+	}
+	record := traceSpanRecord{RunID: span.RunID, SpanID: span.ID, Revision: span.Revision, Sequence: span.Sequence, Payload: payload}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing traceSpanRecord
+		err := tx.Where("run_id = ? AND span_id = ?", span.RunID, span.ID).First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return tx.Create(&record).Error
+		}
+		if err != nil {
+			return err
+		}
+		if existing.Revision > span.Revision {
+			return nil
+		}
+		return tx.Model(&traceSpanRecord{}).Where("run_id = ? AND span_id = ?", span.RunID, span.ID).Updates(map[string]any{
+			"revision": record.Revision,
+			"sequence": record.Sequence,
+			"payload":  record.Payload,
+		}).Error
+	})
+}
+
+func (s *Store) ListTraceSpans(ctx context.Context, runID string) ([]runtime.TraceSpan, error) {
+	if err := s.requireRun(ctx, runID); err != nil {
+		return nil, err
+	}
+	var records []traceSpanRecord
+	if err := s.db.WithContext(ctx).Where("run_id = ?", runID).Order("sequence ASC, span_id ASC").Find(&records).Error; err != nil {
+		return nil, err
+	}
+	spans := make([]runtime.TraceSpan, 0, len(records))
+	for _, record := range records {
+		var span runtime.TraceSpan
+		if err := json.Unmarshal([]byte(record.Payload), &span); err != nil {
+			return nil, err
+		}
+		spans = append(spans, span)
+	}
+	sort.SliceStable(spans, func(i, j int) bool { return spans[i].Sequence < spans[j].Sequence })
+	return spans, nil
 }
 
 func (s *Store) verifySchema(ctx context.Context) error {

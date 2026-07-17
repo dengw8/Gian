@@ -465,6 +465,58 @@ func (s *Store) ListModelLogs(ctx context.Context, runID string) ([]runtime.Mode
 	return readJSONLines[runtime.ModelLog](s.modelLogsPath(runID))
 }
 
+func (s *Store) UpsertTraceSpan(ctx context.Context, span runtime.TraceSpan) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateRunID(span.RunID); err != nil {
+		return err
+	}
+	if span.ID == "" {
+		return errors.New("trace span id is required")
+	}
+	if _, err := s.GetRun(ctx, span.RunID); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return appendJSONLines(s.tracePath(span.RunID), []runtime.TraceSpan{span})
+}
+
+func (s *Store) ListTraceSpans(ctx context.Context, runID string) ([]runtime.TraceSpan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateRunID(runID); err != nil {
+		return nil, err
+	}
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return nil, err
+	}
+	values, err := readJSONLines[runtime.TraceSpan](s.tracePath(runID))
+	if err != nil {
+		return nil, err
+	}
+	latest := make(map[string]runtime.TraceSpan, len(values))
+	for _, span := range values {
+		previous, ok := latest[span.ID]
+		if !ok || span.Revision >= previous.Revision {
+			latest[span.ID] = span
+		}
+	}
+	spans := make([]runtime.TraceSpan, 0, len(latest))
+	for _, span := range latest {
+		spans = append(spans, span)
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i].Sequence == spans[j].Sequence {
+			return spans[i].StartedAt.Before(spans[j].StartedAt)
+		}
+		return spans[i].Sequence < spans[j].Sequence
+	})
+	return spans, nil
+}
+
 func (s *Store) runDir(runID string) string {
 	return filepath.Join(s.root, runsDir, runID)
 }
@@ -483,6 +535,10 @@ func (s *Store) eventsPath(runID string) string {
 
 func (s *Store) modelLogsPath(runID string) string {
 	return filepath.Join(s.runDir(runID), "model_logs.jsonl")
+}
+
+func (s *Store) tracePath(runID string) string {
+	return filepath.Join(s.runDir(runID), "trace.jsonl")
 }
 
 func (s *Store) planPath(runID string) string {

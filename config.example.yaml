@@ -8,6 +8,8 @@ model:
     api_key: "sk-..."
 agent:
   max_iterations: 4
+trace:
+  enabled: true
 storage:
   driver: "local"
   local_dir: "data"

@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Gian Console</title>
+	<base href="/app/" />
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -49,6 +50,10 @@
             </div>
             <button id="copyRunButton" class="icon-button" type="button" title="Copy run id">Copy</button>
           </header>
+		  <nav class="run-page-nav" aria-label="Run pages">
+			<button id="messagesPageButton" class="active" type="button">Messages</button>
+			<button id="tracePageButton" type="button">Execution Trace</button>
+		  </nav>
 
           <section class="status-strip" aria-label="Service and run status">
             <div class="status-card health-card">
@@ -78,7 +83,7 @@
           </section>
         </section>
 
-        <section class="content-grid">
+		<section id="messagesWorkspace" class="content-grid">
           <div class="timeline-panel">
             <div class="panel-toolbar">
               <h2>Messages</h2>
@@ -110,7 +115,8 @@
                   Plan
                 </button>
                 <button
-                  class="inspector-tab"
+                  id="approvalInspectorTab"
+                  class="inspector-tab approval-inspector-tab"
                   type="button"
                   role="tab"
                   aria-selected="false"
@@ -137,7 +143,7 @@
                   aria-controls="approvalPanel"
                   data-inspector-target="approvalPanel"
                 >
-                  Approval
+                  <span>Approval</span><span id="approvalPendingBadge" class="approval-pending-badge" aria-label="Pending approval" hidden></span>
                 </button>
               </div>
             </div>
@@ -177,8 +183,11 @@
               </div>
 
               <div id="approvalPanel" class="approval-panel inspector-view" role="tabpanel" hidden>
-                <div class="panel-toolbar">
-                  <h2>Shell approval</h2>
+                <div class="panel-toolbar approval-toolbar">
+                  <div>
+                    <span class="approval-kicker">Action required</span>
+                    <h2>Shell approval</h2>
+                  </div>
                   <div class="button-row">
                     <button id="approveShellButton" class="success-button" type="button">Approve</button>
                     <button id="denyShellButton" type="button">Deny</button>
@@ -193,7 +202,26 @@
           </aside>
         </section>
 
-        <footer class="composer">
+		<section id="traceWorkspace" class="trace-workspace" hidden>
+		  <div class="trace-tree-panel">
+			<div class="panel-toolbar trace-toolbar"><div><h2>Execution Trace</h2><span id="traceIntegrity" class="trace-integrity"></span></div><button id="refreshTraceButton" type="button">Refresh</button></div>
+			<div class="trace-controls">
+			  <div class="trace-view-tabs" role="tablist"><button id="traceTreeViewButton" class="active" type="button">Tree</button><button id="traceChatViewButton" type="button">Chat</button></div>
+			  <input id="traceSearchInput" type="search" placeholder="Search spans" />
+			  <select id="traceKindFilter"><option value="">All types</option><option value="graph">Graph</option><option value="model">Model</option><option value="tool">Tool</option><option value="approval">Approval</option></select>
+			  <select id="traceStatusFilter"><option value="">All states</option><option value="failed">Failed</option><option value="awaiting_approval">Awaiting approval</option><option value="running">Running</option><option value="succeeded">Succeeded</option></select>
+			</div>
+			<div id="traceTree" class="trace-tree empty-state">Select a run to inspect its execution trace.</div>
+			<button id="traceLoadMoreButton" class="trace-load-more" type="button" hidden>Show more spans</button>
+		  </div>
+		  <aside class="trace-detail-panel">
+			<div class="panel-toolbar"><h2>Span details</h2><div class="trace-detail-actions"><div class="trace-detail-tabs" role="tablist"><button id="traceRunTab" class="active" type="button">Run</button><button id="traceMetadataTab" type="button">Metadata</button></div><button id="copyTraceSpanButton" class="copy-span-button" type="button" title="Copy span JSON" aria-label="Copy span JSON" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8h9a2 2 0 0 1 2 2v9a2 2 0 0 1 2 2h-9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Copy</span></button></div></div>
+			<div id="traceDetails" class="trace-details empty-state">Select a trace node to inspect its details.</div>
+			<div class="trace-compare"><label for="traceCompareRunInput">Compare run</label><div><input id="traceCompareRunInput" type="text" placeholder="run_id" /><button id="compareTraceButton" type="button">Compare</button></div><div id="traceCompareView" class="trace-compare-result"></div></div>
+		  </aside>
+		</section>
+
+		<footer id="messageComposer" class="composer">
           <div id="attachmentPreview" class="attachment-preview" aria-label="Selected images"></div>
           <div class="composer-row">
             <label class="field grow">

@@ -6,6 +6,15 @@ const state = {
   runs: [],
   events: [],
   modelLogs: [],
+	trace: { available: false, spans: [] },
+  traceSelection: null,
+	traceDetailTab: "run",
+	traceBlockModes: {},
+	traceView: "tree",
+	traceFilters: { q: "", kind: "", status: "", limit: 120 },
+	traceExpanded: new Set(),
+	traceExpansionInitialized: false,
+	page: "messages",
 	  pendingApproval: null,
   plan: { mode: "off", steps: [] },
   attachments: [],
@@ -18,9 +27,15 @@ const el = {
   attachmentPreview: document.querySelector("#attachmentPreview"),
 	  approvalView: document.querySelector("#approvalView"),
 	  approveShellButton: document.querySelector("#approveShellButton"),
+	approvalInspectorTab: document.querySelector("#approvalInspectorTab"),
+	approvalPendingBadge: document.querySelector("#approvalPendingBadge"),
 	  denyShellButton: document.querySelector("#denyShellButton"),
 	  cancelShellButton: document.querySelector("#cancelShellButton"),
   copyRunButton: document.querySelector("#copyRunButton"),
+	copyTraceSpanButton: document.querySelector("#copyTraceSpanButton"),
+	messageComposer: document.querySelector("#messageComposer"),
+	messagesPageButton: document.querySelector("#messagesPageButton"),
+	messagesWorkspace: document.querySelector("#messagesWorkspace"),
   currentRunId: document.querySelector("#currentRunId"),
   eventStream: document.querySelector("#eventStream"),
   healthStatus: document.querySelector("#healthStatus"),
@@ -44,29 +59,62 @@ const el = {
   refreshModelLogsButton: document.querySelector("#refreshModelLogsButton"),
   refreshMessagesButton: document.querySelector("#refreshMessagesButton"),
   refreshRunButton: document.querySelector("#refreshRunButton"),
-  resetPlanButton: document.querySelector("#resetPlanButton"),
+	refreshTraceButton: document.querySelector("#refreshTraceButton"),
+	traceTreeViewButton: document.querySelector("#traceTreeViewButton"),
+	traceChatViewButton: document.querySelector("#traceChatViewButton"),
+	traceSearchInput: document.querySelector("#traceSearchInput"),
+	traceKindFilter: document.querySelector("#traceKindFilter"),
+	traceStatusFilter: document.querySelector("#traceStatusFilter"),
+	traceLoadMoreButton: document.querySelector("#traceLoadMoreButton"),
+	traceIntegrity: document.querySelector("#traceIntegrity"),
+	resetPlanButton: document.querySelector("#resetPlanButton"),
   runIdInput: document.querySelector("#runIdInput"),
   runStatus: document.querySelector("#runStatus"),
   sendButton: document.querySelector("#sendButton"),
   streamButton: document.querySelector("#streamButton"),
   toast: document.querySelector("#toast"),
+  traceDetails: document.querySelector("#traceDetails"),
+	traceMetadataTab: document.querySelector("#traceMetadataTab"),
+	traceRunTab: document.querySelector("#traceRunTab"),
+	tracePageButton: document.querySelector("#tracePageButton"),
+	traceTree: document.querySelector("#traceTree"),
+	traceWorkspace: document.querySelector("#traceWorkspace"),
+	traceCompareRunInput: document.querySelector("#traceCompareRunInput"),
+	compareTraceButton: document.querySelector("#compareTraceButton"),
+	traceCompareView: document.querySelector("#traceCompareView"),
   tokenUsage: document.querySelector("#tokenUsage"),
   updatedAt: document.querySelector("#updatedAt"),
 };
 
 function init() {
+	const route = readRunRoute();
+	state.page = route.page;
   renderHistory();
   bindEvents();
   selectInspector(state.activeInspector);
   checkHealth();
   loadRunHistory();
+	setPage(state.page, false);
+	if (route.runId) loadRun(route.runId);
 }
 
 function bindEvents() {
   el.newRunButton.addEventListener("click", createEmptyRun);
   el.loadRunButton.addEventListener("click", loadRunFromInput);
   el.copyRunButton.addEventListener("click", copyCurrentRunId);
+  el.copyTraceSpanButton.addEventListener("click", copySelectedTraceSpan);
+	el.traceRunTab.addEventListener("click", () => setTraceDetailTab("run"));
+	el.traceMetadataTab.addEventListener("click", () => setTraceDetailTab("metadata"));
+	el.messagesPageButton.addEventListener("click", () => setPage("messages", true));
+	el.tracePageButton.addEventListener("click", () => setPage("trace", true));
   el.refreshRunButton.addEventListener("click", refreshRunMetadata);
+	el.refreshTraceButton.addEventListener("click", refreshTrace);
+	el.traceTreeViewButton.addEventListener("click", () => setTraceView("tree"));
+	el.traceChatViewButton.addEventListener("click", () => setTraceView("chat"));
+	el.traceLoadMoreButton.addEventListener("click", () => { state.traceFilters.limit += 120; refreshTrace(); });
+	[el.traceSearchInput, el.traceKindFilter, el.traceStatusFilter].forEach((control) => control.addEventListener("change", refreshTrace));
+	el.traceSearchInput.addEventListener("search", refreshTrace);
+	el.compareTraceButton.addEventListener("click", compareTraceRuns);
   el.refreshMessagesButton.addEventListener("click", refreshMessages);
   el.refreshEventsButton.addEventListener("click", refreshEvents);
   el.refreshModelLogsButton.addEventListener("click", refreshModelLogs);
@@ -198,7 +246,9 @@ async function loadRun(runId) {
       method: "GET",
     });
     selectRun(run);
-	    await Promise.all([refreshMessages(), refreshEvents(), refreshModelLogs(), refreshPlan(), refreshApproval(), loadRunHistory()]);
+		const loads = [refreshMessages(), refreshEvents(), refreshModelLogs(), refreshPlan(), refreshApproval(), loadRunHistory()];
+		if (state.page === "trace") loads.push(refreshTrace());
+		await Promise.all(loads);
   });
 }
 
@@ -264,6 +314,477 @@ async function refreshModelLogs() {
   renderModelLogs();
 }
 
+async function refreshTrace() {
+	if (!state.currentRunId) {
+		renderTrace();
+		return;
+	}
+	state.traceFilters.q = el.traceSearchInput.value.trim();
+	state.traceFilters.kind = el.traceKindFilter.value;
+	state.traceFilters.status = el.traceStatusFilter.value;
+	const query = new URLSearchParams({ limit: String(state.traceFilters.limit) });
+	if (state.traceFilters.q) query.set("q", state.traceFilters.q);
+	if (state.traceFilters.kind) query.set("kind", state.traceFilters.kind);
+	if (state.traceFilters.status) query.set("status", state.traceFilters.status);
+	const data = await requestJSON(`/v1/runs/${encodeURIComponent(state.currentRunId)}/trace?${query}`, { method: "GET" });
+	state.trace = data || { available: false, spans: [] };
+	if (state.traceSelection && !(state.trace.spans || []).some((span) => span.id === state.traceSelection)) {
+		state.traceSelection = null;
+	}
+	renderTrace();
+}
+
+function readRunRoute() {
+	const match = window.location.pathname.match(/^\/app\/runs\/([^/]+)\/(messages|trace)$/);
+	return match ? { runId: decodeURIComponent(match[1]), page: match[2] } : { runId: "", page: "messages" };
+}
+
+function setPage(page, push) {
+	state.page = page === "trace" ? "trace" : "messages";
+	const trace = state.page === "trace";
+	el.messagesWorkspace.hidden = trace;
+	el.messageComposer.hidden = trace;
+	el.traceWorkspace.hidden = !trace;
+	el.messagesPageButton.classList.toggle("active", !trace);
+	el.tracePageButton.classList.toggle("active", trace);
+	if (push && state.currentRunId) updateRunRoute();
+	if (trace) refreshTrace().catch((error) => toast(`Trace refresh failed: ${error.message}`));
+}
+
+function updateRunRoute() {
+	if (!state.currentRunId) return;
+	const path = `/app/runs/${encodeURIComponent(state.currentRunId)}/${state.page}`;
+	if (window.location.pathname !== path) window.history.pushState({}, "", path);
+}
+
+function renderTrace() {
+	el.traceTree.classList.remove("empty-state");
+	el.traceTree.textContent = "";
+	el.traceDetails.classList.remove("empty-state");
+	el.traceDetails.classList.remove("trace-detail-layout");
+	el.traceDetails.textContent = "";
+	el.traceLoadMoreButton.hidden = true;
+	renderTraceIntegrity();
+	if (!state.currentRunId) {
+		el.copyTraceSpanButton.disabled = true;
+		el.traceTree.classList.add("empty-state");
+		el.traceTree.textContent = "Select a run to inspect its execution trace.";
+		el.traceDetails.classList.add("empty-state");
+		el.traceDetails.textContent = "Select a trace node to inspect its details.";
+		return;
+	}
+	if (!state.trace?.available) {
+		el.copyTraceSpanButton.disabled = true;
+		el.traceTree.classList.add("empty-state");
+		el.traceTree.textContent = state.trace?.reason || "Trace was not collected for this run.";
+		el.traceDetails.classList.add("empty-state");
+		el.traceDetails.textContent = "No trace details are available.";
+		return;
+	}
+	if (state.trace.hidden_spans > 0) {
+		el.traceLoadMoreButton.hidden = false;
+		el.traceLoadMoreButton.textContent = `Show ${state.trace.hidden_spans} more span${state.trace.hidden_spans === 1 ? "" : "s"}`;
+	}
+	if (state.traceView === "chat") {
+		renderTraceChat(state.trace.spans || []);
+		const selectedChat = (state.trace.spans || []).find((span) => span.id === state.traceSelection);
+		if (selectedChat) renderTraceDetails(selectedChat);
+		else {
+			el.copyTraceSpanButton.disabled = true;
+			el.traceDetails.classList.add("empty-state");
+			el.traceDetails.textContent = "Select a trace event to inspect its details.";
+		}
+		return;
+	}
+	const byParent = new Map();
+	(state.trace.spans || []).forEach((span) => {
+		const parent = span.parent_id || "";
+		if (!byParent.has(parent)) byParent.set(parent, []);
+		byParent.get(parent).push(span);
+	});
+	byParent.forEach((items) => items.sort((a, b) => (a.sequence || 0) - (b.sequence || 0) || String(a.started_at).localeCompare(String(b.started_at))));
+	const roots = (state.trace.spans || []).filter((span) => !span.parent_id || !state.trace.spans.some((other) => other.id === span.parent_id));
+	if (!state.traceExpansionInitialized && roots.length) {
+		const expandInitialLevels = (span, depth) => {
+			const children = byParent.get(span.id) || [];
+			if (children.length && depth < 2) state.traceExpanded.add(span.id);
+			children.forEach((child) => expandInitialLevels(child, depth + 1));
+		};
+		roots.forEach((span) => expandInitialLevels(span, 0));
+		state.traceExpansionInitialized = true;
+	}
+	roots.forEach((span) => renderTraceNode(span, byParent, el.traceTree, 0));
+	const selected = (state.trace.spans || []).find((span) => span.id === state.traceSelection);
+	if (selected) renderTraceDetails(selected);
+	else {
+		el.copyTraceSpanButton.disabled = true;
+		el.traceDetails.classList.add("empty-state");
+		el.traceDetails.textContent = "Select a trace node to inspect its details.";
+	}
+}
+
+function renderTraceNode(span, byParent, parent, depth) {
+	const children = byParent.get(span.id) || [];
+	const node = document.createElement("div");
+	node.className = "trace-node";
+	const summary = document.createElement("div");
+	summary.className = `trace-summary trace-${span.status || "running"}`;
+	const semanticKind = span.component === "graph" ? "graph" : (span.kind || "span");
+	if (children.length) {
+		const expanded = state.traceExpanded.has(span.id);
+		const toggle = document.createElement("button");
+		toggle.type = "button";
+		toggle.className = "trace-expand-toggle";
+		toggle.textContent = expanded ? "▾" : "▸";
+		toggle.setAttribute("aria-expanded", String(expanded));
+		toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${span.name || span.kind || "span"}`);
+		toggle.title = toggle.getAttribute("aria-label");
+		toggle.addEventListener("click", () => {
+			if (expanded) state.traceExpanded.delete(span.id);
+			else state.traceExpanded.add(span.id);
+			renderTrace();
+		});
+		summary.append(toggle);
+	} else {
+		const placeholder = document.createElement("span");
+		placeholder.className = "trace-expand-placeholder";
+		placeholder.setAttribute("aria-hidden", "true");
+		summary.append(placeholder);
+	}
+	const select = document.createElement("button");
+	select.type = "button";
+	select.className = "trace-select";
+	select.setAttribute("aria-label", `View details for ${span.name || span.kind || "span"}`);
+	select.innerHTML = `<span class="trace-kind">${escapeHTML(semanticKind)}</span><strong>${escapeHTML(span.name || span.kind || "span")}</strong><span>${escapeHTML(span.status || "running")}</span><span>${formatTraceDuration(span)}</span>${span.usage ? `<span>${escapeHTML(formatUsageSummary(span.usage))}</span>` : ""}${span.error ? `<span class="trace-error">${escapeHTML(span.error)}</span>` : ""}`;
+	select.addEventListener("click", () => { selectTraceSpan(span.id); });
+	summary.append(select);
+	node.append(summary);
+	if (children.length) {
+		const nested = document.createElement("div");
+		nested.className = "trace-children";
+		nested.hidden = !state.traceExpanded.has(span.id);
+		children.forEach((child) => renderTraceNode(child, byParent, nested, depth + 1));
+		node.append(nested);
+	}
+	parent.append(node);
+}
+
+function renderTraceIntegrity() {
+	const diagnostics = state.trace?.diagnostics;
+	if (!diagnostics) {
+		el.traceIntegrity.textContent = "";
+		return;
+	}
+	if (diagnostics.complete) {
+		el.traceIntegrity.className = "trace-integrity complete";
+		el.traceIntegrity.textContent = `Trace complete · ${state.trace.total_spans || state.trace.spans?.length || 0} spans`;
+		return;
+	}
+	el.traceIntegrity.className = "trace-integrity incomplete";
+	el.traceIntegrity.textContent = `Trace may be incomplete · ${diagnostics.dropped_updates || 0} dropped${diagnostics.last_error ? " · write error" : ""}`;
+}
+
+function setTraceView(view) {
+	state.traceView = view === "chat" ? "chat" : "tree";
+	el.traceTreeViewButton.classList.toggle("active", state.traceView === "tree");
+	el.traceChatViewButton.classList.toggle("active", state.traceView === "chat");
+	renderTrace();
+}
+
+function renderTraceChat(spans) {
+	const stream = document.createElement("div");
+	stream.className = "trace-chat";
+	const ordered = [...spans].sort((a, b) => (a.sequence || 0) - (b.sequence || 0) || String(a.started_at).localeCompare(String(b.started_at)));
+	for (const span of ordered) {
+		if (!["model", "tool", "approval", "turn"].includes(span.kind)) continue;
+		const item = document.createElement("article");
+		item.className = `trace-chat-item trace-${span.kind} trace-${span.status || "running"}`;
+		const title = document.createElement("button");
+		title.type = "button";
+		title.className = "trace-chat-title";
+		title.textContent = `${span.kind === "turn" ? "Turn" : span.kind === "model" ? "Model" : span.name} · ${formatTraceDuration(span)}`;
+		title.addEventListener("click", () => selectTraceSpan(span.id));
+		item.append(title);
+		if (span.kind === "model") {
+			const output = parseTracePayload(span.output);
+			const calls = output?.message?.tool_calls || [];
+			if (calls.length) {
+				const callsNode = document.createElement("div");
+				callsNode.className = "trace-chat-calls";
+				calls.forEach((call) => {
+					const callButton = document.createElement("button");
+					callButton.type = "button";
+					callButton.textContent = `Tool call: ${call.name}`;
+					callButton.addEventListener("click", () => selectTraceSpan(`trace_tool_${call.id}`));
+					callsNode.append(callButton);
+				});
+				item.append(callsNode);
+			} else {
+				appendTraceChatPreview(item, output?.message?.content || "Model completed");
+			}
+		} else if (span.kind === "tool") {
+			const output = parseTracePayload(span.output);
+			appendTraceChatPreview(item, output?.content || output?.error || span.error || "Tool started");
+		} else if (span.kind === "turn") {
+			const input = parseTracePayload(span.input);
+			appendTraceChatPreview(item, input?.user_prompt?.content || "Turn started");
+		} else {
+			appendTraceChatPreview(item, span.status || "approval");
+		}
+		stream.append(item);
+	}
+	if (!stream.childElementCount) stream.textContent = "No conversation events match the current trace filter.";
+	el.traceTree.append(stream);
+}
+
+function appendTraceChatPreview(parent, value) {
+	const preview = document.createElement("p");
+	preview.textContent = typeof value === "string" ? value : formatTraceText(value);
+	parent.append(preview);
+}
+
+async function selectTraceSpan(spanID) {
+	let span = (state.trace.spans || []).find((item) => item.id === spanID);
+	if (!span && state.currentRunId) {
+		try {
+			const data = await requestJSON(`/v1/runs/${encodeURIComponent(state.currentRunId)}/trace/spans/${encodeURIComponent(spanID)}`, { method: "GET" });
+			span = data?.span;
+			if (span) state.trace.spans = [...(state.trace.spans || []), span];
+		} catch (error) {
+			toast(`Trace span load failed: ${error.message}`);
+			return;
+		}
+	}
+	if (!span) {
+		toast("The linked trace span is not available in this run");
+		return;
+	}
+	state.traceSelection = span.id;
+	renderTrace();
+}
+
+function renderTraceDetails(span) {
+	el.copyTraceSpanButton.disabled = false;
+	el.traceDetails.classList.add("trace-detail-layout");
+	el.traceRunTab.classList.toggle("active", state.traceDetailTab === "run");
+	el.traceMetadataTab.classList.toggle("active", state.traceDetailTab === "metadata");
+	el.traceRunTab.setAttribute("aria-selected", String(state.traceDetailTab === "run"));
+	el.traceMetadataTab.setAttribute("aria-selected", String(state.traceDetailTab === "metadata"));
+	const content = document.createElement("div");
+	content.className = "trace-detail-content";
+	const summary = renderTraceSummary(span);
+	if (state.traceDetailTab === "metadata") {
+		const attributes = span.attributes || {};
+		const { runtime, ...metadataAttributes } = attributes;
+		const metadata = { id: span.id, parent_id: span.parent_id, run_id: span.run_id, turn_id: span.turn_id, kind: span.kind, component: span.component, name: span.name, status: span.status, revision: span.revision, sequence: span.sequence, started_at: span.started_at, completed_at: span.completed_at, duration_ms: span.duration_ms, model_call_id: span.model_call_id, tool_call_id: span.tool_call_id, links: span.links, usage: span.usage, error: span.error, attributes: metadataAttributes };
+		renderTraceBlock(content, span, "Metadata", metadata);
+		renderTraceBlock(content, span, "Runtime", runtime || {});
+		el.traceDetails.append(content, summary);
+		return;
+	}
+	if (span.kind === "turn" || span.component === "graph") {
+		const input = parseTracePayload(span.input);
+		if (input && typeof input === "object" && !Array.isArray(input)) {
+			if (Object.prototype.hasOwnProperty.call(input, "system_prompt")) {
+				renderTraceBlock(content, span, "System prompt", input.system_prompt);
+			}
+			if (Object.prototype.hasOwnProperty.call(input, "user_prompt")) {
+				renderTraceBlock(content, span, "User prompt", input.user_prompt);
+			}
+			renderTraceBlock(content, span, "Output", span.output || []);
+			el.traceDetails.append(content, summary);
+			return;
+		}
+	}
+	if (span.kind === "model") {
+		renderModelTraceRun(content, span);
+	} else if (span.kind === "tool") {
+		renderTraceBlock(content, span, "Arguments", span.input || {});
+		renderTraceBlock(content, span, span.error ? "Error" : "Result", span.output || span.error || {});
+		renderTraceLinks(content, span);
+	} else if (span.kind === "approval") {
+		renderTraceBlock(content, span, "Approval request", span.input || {});
+		renderTraceBlock(content, span, "Decision", span.output || {});
+		renderTraceLinks(content, span);
+	} else {
+		renderTraceBlock(content, span, "Input", span.input || {});
+		renderTraceBlock(content, span, "Output", span.output || {});
+		renderTraceLinks(content, span);
+	}
+	el.traceDetails.append(content, summary);
+}
+
+async function setTraceDetailTab(tab) {
+	state.traceDetailTab = tab === "metadata" ? "metadata" : "run";
+	renderTrace();
+}
+
+function renderModelTraceRun(parent, span) {
+	const input = parseTracePayload(span.input);
+	const output = parseTracePayload(span.output);
+	const calls = output?.message?.tool_calls || [];
+	if (calls.length) renderTraceBlock(parent, span, "Tool calls", calls);
+	if (input?.system_prompt) renderTraceBlock(parent, span, "System prompt", input.system_prompt);
+	if (input?.messages) renderTraceBlock(parent, span, "Messages", input.messages);
+	renderTraceBlock(parent, span, "Output", output || {});
+	renderTraceLinks(parent, span);
+}
+
+function renderTraceLinks(parent, span) {
+	if (!span.links?.length) return;
+	const section = document.createElement("section");
+	section.className = "trace-links";
+	const heading = document.createElement("h3");
+	heading.textContent = "Related spans";
+	section.append(heading);
+	span.links.forEach((link) => {
+		const button = document.createElement("button");
+		button.type = "button";
+		button.textContent = `${link.type}: ${link.tool_call_id || link.span_id}`;
+		button.addEventListener("click", () => selectTraceSpan(link.span_id));
+		section.append(button);
+	});
+	parent.append(section);
+}
+
+function renderTraceSummary(span) {
+	const aside = document.createElement("aside");
+	aside.className = "trace-span-summary";
+	const fields = [
+		["Status", span.status || "-"],
+		["Span ID", span.id || "-"],
+		["Type", span.kind || "-"],
+		["Latency", formatTraceDuration(span)],
+		["Start time", formatDate(span.started_at)],
+		["End time", span.completed_at ? formatDate(span.completed_at) : "-"],
+		["Tokens", span.usage ? formatUsageSummary(span.usage) : "-"],
+		["Run ID", span.run_id || "-"],
+		["Turn ID", span.turn_id || "-"],
+		["Model call", span.model_call_id || "-"],
+		["Tool call", span.tool_call_id || "-"],
+		["Error", span.error || "-"],
+	];
+	fields.forEach(([label, value]) => {
+		const row = document.createElement("div");
+		const title = document.createElement("span");
+		title.textContent = label;
+		const body = document.createElement("strong");
+		body.textContent = value;
+		body.title = value;
+		if (label === "Status") body.className = `trace-status trace-${value}`;
+		row.append(title, body);
+		aside.append(row);
+	});
+	return aside;
+}
+
+async function compareTraceRuns() {
+	const otherRunID = el.traceCompareRunInput.value.trim();
+	if (!state.currentRunId || !otherRunID) {
+		toast("Select a current Run and enter a Run ID to compare");
+		return;
+	}
+	try {
+		const comparison = await requestJSON(`/v1/runs/${encodeURIComponent(state.currentRunId)}/trace/compare/${encodeURIComponent(otherRunID)}`, { method: "GET" });
+		const rows = [comparison.current, comparison.other].map((item) => `<tr><td>${escapeHTML(item.run_id)}</td><td>${escapeHTML(item.status)}</td><td>${item.total_spans}</td><td>${item.failed_spans}</td><td>${item.duration_ms}ms</td><td>${escapeHTML(formatUsageSummary(item.token_usage || {}))}</td></tr>`).join("");
+		el.traceCompareView.innerHTML = `<table><thead><tr><th>Run</th><th>Status</th><th>Spans</th><th>Failed</th><th>Duration</th><th>Tokens</th></tr></thead><tbody>${rows}</tbody></table>`;
+	} catch (error) {
+		toast(`Trace comparison failed: ${error.message}`);
+	}
+}
+
+function renderTraceBlock(parent, span, title, value) {
+	const section = document.createElement("section");
+	section.className = "trace-detail-block";
+	const header = document.createElement("div");
+	header.className = "trace-block-header";
+	const heading = document.createElement("h3");
+	heading.textContent = title;
+	const actions = document.createElement("div");
+	actions.className = "trace-block-actions";
+	const blockKey = `${span.id}:${title}`;
+	const mode = state.traceBlockModes[blockKey] || "text";
+	["text", "json"].forEach((candidate) => {
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "trace-block-mode";
+		button.textContent = candidate.toUpperCase();
+		button.classList.toggle("active", mode === candidate);
+		button.addEventListener("click", () => {
+			state.traceBlockModes[blockKey] = candidate;
+			renderTrace();
+		});
+		actions.append(button);
+	});
+	const copy = document.createElement("button");
+	copy.type = "button";
+	copy.className = "trace-block-copy";
+	copy.textContent = "Copy";
+	copy.addEventListener("click", () => copyTraceBlock(title, value));
+	actions.append(copy);
+	const data = document.createElement("pre");
+	data.className = "code-block";
+	data.textContent = mode === "json" ? formatJSON(value) : formatTraceText(value);
+	header.append(heading, actions);
+	section.append(header, data);
+	parent.append(section);
+}
+
+function formatTraceText(value) {
+	const parsed = parseTracePayload(value);
+	if (typeof parsed === "string") return parsed;
+	if (Array.isArray(parsed) && parsed.every((item) => item?.content)) {
+		return parsed.map((item) => `${item.role || "message"}: ${item.content}`).join("\n\n");
+	}
+	if (parsed?.content && Object.keys(parsed).every((key) => ["role", "content", "attachments", "created_at"].includes(key))) {
+		return parsed.content;
+	}
+	return formatJSON(parsed);
+}
+
+async function copyTraceBlock(title, value) {
+	try {
+		await navigator.clipboard.writeText(formatJSON(value));
+		toast(`${title} copied`);
+	} catch (error) {
+		toast(`Copy failed: ${error.message}`);
+	}
+}
+
+function parseTracePayload(value) {
+	if (typeof value !== "string") return value;
+	try {
+		return JSON.parse(value);
+	} catch {
+		return value;
+	}
+}
+
+async function copySelectedTraceSpan() {
+	const span = (state.trace.spans || []).find((item) => item.id === state.traceSelection);
+	if (!span) return;
+	try {
+		await navigator.clipboard.writeText(JSON.stringify(span, null, 2));
+		toast("Span JSON copied");
+	} catch (error) {
+		toast(`Copy failed: ${error.message}`);
+	}
+}
+
+function formatTraceDuration(span) {
+	if (typeof span.duration_ms === "number" && span.duration_ms >= 0) return `${span.duration_ms}ms`;
+	const started = Date.parse(span.started_at);
+	const completed = Date.parse(span.completed_at);
+	if (Number.isFinite(started) && Number.isFinite(completed) && completed >= started) return `${completed - started}ms`;
+	return span.status === "running" ? "in progress" : "—";
+}
+
+function escapeHTML(value) {
+	const node = document.createElement("span");
+	node.textContent = value;
+	return node.innerHTML;
+}
+
 async function refreshPlan() {
   if (!state.currentRunId) {
     selectPlan(null);
@@ -276,6 +797,7 @@ async function refreshPlan() {
 }
 
 async function refreshApproval() {
+	  const previousApprovalID = state.pendingApproval?.id || "";
 	  if (!state.currentRunId) {
 	    state.pendingApproval = null;
 	    renderApproval();
@@ -295,6 +817,10 @@ async function refreshApproval() {
 	    }
 	  }
 	  renderApproval();
+	  if (state.pendingApproval && state.pendingApproval.id !== previousApprovalID) {
+	    selectInspector("approvalPanel");
+	    toast("Shell approval is waiting for your decision");
+	  }
 }
 
 async function resolveShellApproval(decision) {
@@ -511,7 +1037,12 @@ function handleStreamEvent(event) {
 }
 
 function selectRun(run) {
-  state.currentRunId = run.id;
+	if (state.currentRunId !== run.id) {
+		state.traceExpanded = new Set();
+		state.traceExpansionInitialized = false;
+		state.traceSelection = null;
+	}
+	state.currentRunId = run.id;
   el.currentRunId.textContent = run.id;
   el.runIdInput.value = run.id;
   el.runStatus.textContent = run.status || "-";
@@ -521,6 +1052,7 @@ function selectRun(run) {
   el.updatedAt.textContent = formatDate(run.updated_at);
   upsertRun(run);
   renderHistory();
+	updateRunRoute();
 }
 
 function selectPlan(plan) {
@@ -612,6 +1144,10 @@ function renderPlan() {
 
 function renderApproval() {
 	  const approval = state.pendingApproval;
+	  const pending = Boolean(approval);
+	  el.approvalInspectorTab.classList.toggle("has-pending", pending);
+	  el.approvalInspectorTab.setAttribute("aria-label", pending ? "Approval, pending decision" : "Approval");
+	  el.approvalPendingBadge.hidden = !pending;
 	  el.approvalView.textContent = "";
 	  if (!approval) {
 	    el.approvalView.classList.add("empty-state");
@@ -620,11 +1156,25 @@ function renderApproval() {
 	    return;
 	  }
 	  el.approvalView.classList.remove("empty-state");
-	  const workspace = document.createElement("p");
-	  workspace.className = "approval-workspace";
-	  workspace.textContent = `Workspace: ${approval.workspace || "-"}`;
-	  el.approvalView.append(workspace);
+	  const overview = document.createElement("div");
+	  overview.className = "approval-overview";
+	  const stateLabel = document.createElement("span");
+	  stateLabel.className = "approval-state-label";
+	  stateLabel.textContent = "Pending your decision";
+	  const intro = document.createElement("p");
+	  intro.textContent = "This command requires explicit approval before it can run.";
+	  overview.append(stateLabel, intro);
 
+	  const facts = document.createElement("dl");
+	  facts.className = "approval-facts";
+	  appendApprovalFact(facts, "Workspace", approval.workspace || "-");
+	  appendApprovalFact(facts, "Tool", approval.tool_call?.name || "shell");
+	  el.approvalView.append(overview, facts);
+
+	  const risk = document.createElement("section");
+	  risk.className = "approval-risk";
+	  const riskTitle = document.createElement("h3");
+	  riskTitle.textContent = "Why approval is required";
 	  const reasons = document.createElement("ul");
 	  reasons.className = "approval-reasons";
 	  (approval.risk_reasons || []).forEach((reason) => {
@@ -632,13 +1182,32 @@ function renderApproval() {
 	    item.textContent = reason;
 	    reasons.append(item);
 	  });
-	  el.approvalView.append(reasons);
+	  if (reasons.childElementCount === 0) {
+		  const item = document.createElement("li");
+		  item.textContent = "This command requires manual review.";
+		  reasons.append(item);
+	  }
+	  risk.append(riskTitle, reasons);
 
+	  const command = document.createElement("section");
+	  command.className = "approval-command";
+	  const commandTitle = document.createElement("h3");
+	  commandTitle.textContent = "Command to run";
 	  const script = document.createElement("pre");
 	  script.className = "approval-script";
 	  script.textContent = shellCommandFromApproval(approval);
-	  el.approvalView.append(script);
+	  command.append(commandTitle, script);
+	  el.approvalView.append(risk, command);
 	  setApprovalActionsDisabled(state.busy);
+}
+
+function appendApprovalFact(parent, label, value) {
+	const term = document.createElement("dt");
+	term.textContent = label;
+	const detail = document.createElement("dd");
+	detail.textContent = value;
+	detail.title = value;
+	parent.append(term, detail);
 }
 
 function shellCommandFromApproval(approval) {
